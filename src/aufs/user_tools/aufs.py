@@ -11,6 +11,7 @@ from pathlib import Path
 import pyarrow.parquet as pq
 import platform
 import textwrap
+import stat
 
 class AUFS(QMainWindow):
     def __init__(self):
@@ -67,30 +68,6 @@ class AUFS(QMainWindow):
         layout.addWidget(self.checkbox_credentials)
         layout.addWidget(self.checkbox_root_dir)
         layout.addWidget(self.checkbox_spare)
-
-    def show_aufs_info(self):
-        """
-        Show the AUFS Information dialog, including schema, metadata, and data from the Parquet file.
-        """
-        selected_item = self.schema_list.currentItem()
-        if selected_item:
-            parquet_file = self.get_embedded_parquet_path(selected_item.text())  # Path to embedded Parquet file
-
-            try:
-                # Read the Parquet file
-                parquet_table = pq.read_table(parquet_file)
-
-                # Extract schema, metadata, and data
-                schema = parquet_table.schema
-                metadata = schema.metadata
-                data = parquet_table.to_pandas()
-
-                # Show the info dialog
-                info_dialog = AUFSInfoDialog(schema=schema, metadata=metadata, data=data, parent=self)
-                info_dialog.exec_()
-
-            except Exception as e:
-                print(f"Error reading Parquet file: {e}")
 
     def setup_aufs_directories(self):
         """
@@ -594,7 +571,14 @@ class AUFS(QMainWindow):
                     raise Exception("Unsupported platform!")
 
         if __name__ == "__main__":
-            provisioner = ParquetProvisioner(r"{parquet_file}")
+            # Check if a Parquet file path is passed as a command-line argument
+            if len(sys.argv) > 1:
+                parquet_file_path = sys.argv[1]  # Take the first argument as the Parquet file path
+            else:
+                messagebox.showerror("Error", "Please provide a Parquet file path as a command-line argument.")
+                sys.exit(1)  # Exit if no argument is provided
+
+            provisioner = ParquetProvisioner(parquet_file_path)
             provisioner.run()
         """
 
@@ -701,7 +685,14 @@ class AUFS(QMainWindow):
                     raise Exception("Unsupported platform!")
 
         if __name__ == "__main__":
-            provisioner = ParquetProvisioner(r"{parquet_file}")
+            # Check if a Parquet file path is passed as a command-line argument
+            if len(sys.argv) > 1:
+                parquet_file_path = sys.argv[1]  # Take the first argument as the Parquet file path
+            else:
+                messagebox.showerror("Error", "Please provide a Parquet file path as a command-line argument.")
+                sys.exit(1)  # Exit if no argument is provided
+
+            provisioner = ParquetProvisioner(parquet_file_path)
             provisioner.run()
         """
 
@@ -837,7 +828,14 @@ class AUFS(QMainWindow):
                     raise Exception("Unsupported platform!")
 
         if __name__ == "__main__":
-            provisioner = ParquetProvisioner(r"{parquet_file}")
+            # Check if a Parquet file path is passed as a command-line argument
+            if len(sys.argv) > 1:
+                parquet_file_path = sys.argv[1]  # Take the first argument as the Parquet file path
+            else:
+                messagebox.showerror("Error", "Please provide a Parquet file path as a command-line argument.")
+                sys.exit(1)  # Exit if no argument is provided
+
+            provisioner = ParquetProvisioner(parquet_file_path)
             provisioner.run()
         """
 
@@ -956,7 +954,14 @@ class AUFS(QMainWindow):
                     raise Exception("Unsupported platform!")
 
         if __name__ == "__main__":
-            provisioner = ParquetProvisioner(r"{parquet_file}")
+            # Check if a Parquet file path is passed as a command-line argument
+            if len(sys.argv) > 1:
+                parquet_file_path = sys.argv[1]  # Take the first argument as the Parquet file path
+            else:
+                messagebox.showerror("Error", "Please provide a Parquet file path as a command-line argument.")
+                sys.exit(1)  # Exit if no argument is provided
+
+            provisioner = ParquetProvisioner(parquet_file_path)
             provisioner.run()
         """
 
@@ -977,17 +982,62 @@ class AUFS(QMainWindow):
 
         return script_path
 
-    def get_embedded_parquet_path(self, filename):
+    def package_executable_and_parquet(self, executable_name, parquet_file):
         """
-        Retrieves the full path to the embedded Parquet file.
+        Moves the generated executable and Parquet file into a folder and zips the folder.
         """
-        if hasattr(sys, '_MEIPASS'):
-            # If running from a PyInstaller bundle, look for the Parquet file in the same directory
-            base_path = os.path.join(sys._MEIPASS, filename)
-        else:
-            # Use the local path if running as a script
-            base_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
-        return base_path
+        # Create a new folder with the name based on the executable name
+        folder_name = os.path.splitext(executable_name)[0]  # Remove the extension to get the folder name
+        os.makedirs(folder_name, exist_ok=True)
+
+        # Move the executable to the folder
+        executable_path = os.path.join(os.getcwd(), 'dist', executable_name)
+        shutil.move(executable_path, os.path.join(folder_name, executable_name))
+
+        # Move the Parquet file to the folder
+        shutil.copy(parquet_file, os.path.join(folder_name, os.path.basename(parquet_file)))
+
+        # Zip the folder
+        shutil.make_archive(folder_name, 'zip', folder_name)
+
+        # Inform the user
+        QMessageBox.information(self, "Success", f"Packaged and zipped into {folder_name}.zip")
+
+        def get_embedded_parquet_path(self, filename):
+            """
+            Retrieves the full path to the embedded Parquet file.
+            """
+            if hasattr(sys, '_MEIPASS'):
+                # If running from a PyInstaller bundle, _MEIPASS is the temp folder where files are extracted
+                base_path = os.path.join(sys._MEIPASS, filename)
+            else:
+                # Use the local path if running as a script (development mode)
+                base_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+            return base_path
+
+    def show_aufs_info(self):
+        """
+        Show the AUFS Information dialog, including schema, metadata, and data from the Parquet file.
+        """
+        selected_item = self.schema_list.currentItem()
+        if selected_item:
+            parquet_file = self.get_embedded_parquet_path(selected_item.text())  # Path to embedded Parquet file
+
+            try:
+                # Read the Parquet file
+                parquet_table = pq.read_table(parquet_file)
+
+                # Extract schema, metadata, and data
+                schema = parquet_table.schema
+                metadata = schema.metadata
+                data = parquet_table.to_pandas()
+
+                # Show the info dialog
+                info_dialog = AUFSInfoDialog(schema=schema, metadata=metadata, data=data, parent=self)
+                info_dialog.exec_()
+
+            except Exception as e:
+                print(f"Error reading Parquet file: {e}")
 
     def update_spec_file(self, target_parquet_file, provisioner_script):
         """
@@ -1045,9 +1095,9 @@ exe = EXE(
             source_parquet_file = os.path.join(self.parquet_dir, selected_item.text())  # Full path to the Parquet file
 
             try:
-                # Step 1: Copy the Parquet file to the current working directory (consistent with PyInstaller)
-                working_dir = os.getcwd()  # Get the current working directory
-                parquet_file = os.path.join(working_dir, os.path.basename(source_parquet_file))
+                # Step 1: Copy the Parquet file to the script location
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                parquet_file = os.path.join(script_dir, os.path.basename(source_parquet_file))
                 shutil.copy(source_parquet_file, parquet_file)
 
                 # Step 2: Determine which script to generate based on the checkboxes
@@ -1065,29 +1115,23 @@ exe = EXE(
                     provisioner_script_path = self.generate_provisioner_script_root(parquet_file)
 
                 # Step 3: Run PyInstaller to create an executable package
-                self.run_pyinstaller(provisioner_script_path, parquet_file)
+                self.run_pyinstaller(provisioner_script_path)
+
+                # Step 4: Package both executable and Parquet file together
+                executable_name = os.path.basename(provisioner_script_path).replace('.py', '')
+                self.package_executable_and_parquet(executable_name, parquet_file)
 
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to create the package: {str(e)}")
 
-    def run_pyinstaller(self, provisioner_script, parquet_file):
+    def run_pyinstaller(self, provisioner_script):
         """
         Runs PyInstaller to create an executable from the generated provisioner script.
-        :param provisioner_script: Path to the generated Python script.
-        :param parquet_file: Path to the selected Parquet file.
+        Does NOT embed the Parquet file into the executable, but will bundle the file afterward.
         """
-        # Make sure the Parquet file is in the current working directory and use its relative path
-        parquet_basename = os.path.basename(parquet_file)
-
-        if platform.system().lower() == 'windows':
-            add_data = f'{parquet_basename};.'
-        else:
-            add_data = f'{parquet_basename}:.'
-
         pyinstaller_command = [
             'pyinstaller',
             '--onefile',                        
-            '--add-data', add_data,             # Use relative path for Parquet file
             '--hidden-import', 'pyarrow',       
             '--hidden-import', 'pyarrow.pandas_compat',  
             '--hidden-import', 'pyarrow.lib',   
@@ -1095,14 +1139,71 @@ exe = EXE(
             '--hidden-import', 'pyarrow.vendored',  
             '--hidden-import', 'numpy',         
             '--hidden-import', 'tkinter',       
-            provisioner_script                 # Script to package
+            provisioner_script                 
         ]
 
         try:
             subprocess.run(pyinstaller_command, check=True)
-            QMessageBox.information(self, "Success", "Double-clickable package created successfully!")
+            QMessageBox.information(self, "Success", "Executable created successfully!")
         except subprocess.CalledProcessError as e:
             QMessageBox.critical(self, "Error", f"PyInstaller failed: {str(e)}")
+
+    def package_executable_and_parquet(self, executable_name, parquet_file):
+        """
+        Moves the generated executable and Parquet file into a folder and creates a double-clickable script
+        for both Windows and Unix-like systems (Linux/macOS).
+        """
+        # Create a new folder with the name based on the executable name
+        folder_name = os.path.splitext(executable_name)[0]  # Remove the extension to get the folder name
+        os.makedirs(folder_name, exist_ok=True)
+
+        # Move the executable to the folder
+        executable_path = os.path.join(os.getcwd(), 'dist', executable_name)
+        shutil.move(executable_path, os.path.join(folder_name, executable_name))
+
+        # Move the Parquet file to the folder
+        shutil.copy(parquet_file, os.path.join(folder_name, os.path.basename(parquet_file)))
+
+        # Create the Windows .bat script
+        self.create_windows_bat_file(folder_name, executable_name, os.path.basename(parquet_file))
+
+        # Create the Unix .sh script
+        self.create_unix_sh_file(folder_name, executable_name, os.path.basename(parquet_file))
+
+        # Zip the folder
+        shutil.make_archive(folder_name, 'zip', folder_name)
+
+        # Inform the user
+        QMessageBox.information(self, "Success", f"Packaged and zipped into {folder_name}.zip")
+
+    def create_windows_bat_file(self, folder_name, executable_name, parquet_file_name):
+        """
+        Creates a .bat file for Windows to double-click and run the provisioner executable with the Parquet file.
+        """
+        bat_file_content = f"""@echo off
+    cd /d %~dp0
+    start {executable_name} {parquet_file_name}
+    """
+        bat_file_path = os.path.join(folder_name, f"run_{executable_name}.bat")
+        with open(bat_file_path, 'w') as bat_file:
+            bat_file.write(bat_file_content)
+
+    def create_unix_sh_file(self, folder_name, executable_name, parquet_file_name):
+        """
+        Creates a .sh file for Unix-like systems (Linux/macOS) to double-click and run the provisioner executable
+        with the Parquet file.
+        """
+        sh_file_content = f"""#!/bin/bash
+    DIR="$(cd "$(dirname "$0")" && pwd)"
+    $DIR/{executable_name} {parquet_file_name}
+    """
+        sh_file_path = os.path.join(folder_name, f"run_{executable_name}.sh")
+        with open(sh_file_path, 'w') as sh_file:
+            sh_file.write(sh_file_content)
+
+        # Make the .sh file executable
+        st = os.stat(sh_file_path)
+        os.chmod(sh_file_path, st.st_mode | stat.S_IEXEC)
 
 class AUFSInfoDialog(QDialog):
     def __init__(self, schema, metadata, data, parent=None):

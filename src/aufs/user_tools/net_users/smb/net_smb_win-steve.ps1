@@ -9,10 +9,10 @@ function Create-SecureString {
     return $SecurePassword
 }
 
-$SMBServer = "\\18.175.206.107\nh_data"
+$SMBServer = "\\18.175.206.107\sm_data"
 $MountPoint = "MNTPOINT"  # Drive letter or mount point selected dynamically
-$Username = "neil"
-$Password = "am4ih7qnllar2du0eqvj8utv"
+$Username = "steve"
+$Password = "tinker458sincin"
 
 # Convert the password to a secure string without ConvertTo-SecureString
 $SecurePassword = Create-SecureString $Password

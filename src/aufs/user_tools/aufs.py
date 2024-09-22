@@ -3,6 +3,7 @@ import os
 import json
 import time
 import subprocess
+import shutil
 from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QListWidget, QDialog, QVBoxLayout, QLabel, QTextEdit, QPushButton,
                                QCheckBox, QVBoxLayout, QWidget, QMessageBox)
 from PySide6.QtCore import Qt
@@ -66,18 +67,6 @@ class AUFS(QMainWindow):
         layout.addWidget(self.checkbox_credentials)
         layout.addWidget(self.checkbox_root_dir)
         layout.addWidget(self.checkbox_spare)
-
-    def get_embedded_parquet_path(self, filename):
-        """
-        Retrieves the full path to the embedded Parquet file.
-        """
-        if hasattr(sys, '_MEIPASS'):
-            # If running from a PyInstaller bundle, _MEIPASS is the temp folder where files are extracted
-            base_path = os.path.join(sys._MEIPASS, filename)
-        else:
-            # Use the local path if running as a script
-            base_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
-        return base_path
 
     def show_aufs_info(self):
         """
@@ -283,40 +272,7 @@ class AUFS(QMainWindow):
             # If an error occurs, report the failure
             print(f"Error executing script: {e}")
             print(f"Script execution failed with stderr: {e.stderr}")
-
-    def create_double_clickable_package(self):
-        """
-        Create a double-clickable package from the selected Parquet file using PyInstaller.
-        Based on the state of checkboxes, determine which provisioning script to generate.
-        """
-        selected_item = self.schema_list.currentItem()
-        if selected_item:
-            parquet_file = os.path.join(self.parquet_dir, selected_item.text())  # Full path to the Parquet file
-
-            try:
-                # Determine which script to generate based on the checkboxes
-                if self.checkbox_credentials.isChecked() and self.checkbox_root_dir.isChecked():
-                    # Both credentials and root dir are checked, use full script generation
-                    provisioner_script_path = self.generate_provisioner_script(parquet_file)
-
-                elif not self.checkbox_credentials.isChecked() and not self.checkbox_root_dir.isChecked():
-                    # All unchecked, generate clean script with no dialogs or replacements
-                    provisioner_script_path = self.generate_provisioner_script_clean(parquet_file)
-
-                elif not self.checkbox_root_dir.isChecked():
-                    # Mount point unchecked, generate script with only username and password prompts
-                    provisioner_script_path = self.generate_provisioner_script_user(parquet_file)
-
-                else:
-                    # Only credentials unchecked, generate script with root (mount point) dialog
-                    provisioner_script_path = self.generate_provisioner_script_root(parquet_file)
-
-                # Step 2: Run PyInstaller to create an executable package
-                self.run_pyinstaller(provisioner_script_path, parquet_file)
-
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to create the package: {str(e)}")
-
+            
     def run_provisioning_workflow(self, parquet_path):
         """
         The full workflow of reading the Parquet file, extracting the platform-specific script, and executing it.
@@ -1019,34 +975,129 @@ class AUFS(QMainWindow):
 
         return script_path
 
+    def get_embedded_parquet_path(self, filename):
+        """
+        Retrieves the full path to the embedded Parquet file.
+        """
+        if hasattr(sys, '_MEIPASS'):
+            # If running from a PyInstaller bundle, _MEIPASS is the temp folder where files are extracted
+            base_path = os.path.join(sys._MEIPASS, filename)
+        else:
+            # Use the local path if running as a script
+            base_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+        return base_path
+
+    def create_double_clickable_package(self):
+        """
+        Create a double-clickable package from the selected Parquet file using PyInstaller.
+        Copy the selected Parquet file to the non-repo directory (like ~/.aufs/provisioning)
+        and update the spec file dynamically to use this location.
+        """
+        selected_item = self.schema_list.currentItem()
+        if selected_item:
+            source_parquet_file = os.path.join(self.parquet_dir, selected_item.text())  # Full path to the Parquet file
+
+            try:
+                # Step 1: Copy the Parquet file to the provisioning directory
+                timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+                parquet_name = os.path.basename(source_parquet_file)
+                target_dir = os.path.join(str(Path.home()), f".aufs/provisioning/pyinstaller/{parquet_name}_{timestamp}")
+                os.makedirs(target_dir, exist_ok=True)
+
+                parquet_file = os.path.join(target_dir, parquet_name)  # Define target parquet location
+                shutil.copy(source_parquet_file, parquet_file)
+                print(f"Copied {source_parquet_file} to {parquet_file}")
+
+                # Step 2: Generate the provisioning script in the same target directory
+                if self.checkbox_credentials.isChecked() and self.checkbox_root_dir.isChecked():
+                    provisioner_script_path = self.generate_provisioner_script(parquet_file)
+                elif not self.checkbox_credentials.isChecked() and not self.checkbox_root_dir.isChecked():
+                    provisioner_script_path = self.generate_provisioner_script_clean(parquet_file)
+                elif not self.checkbox_root_dir.isChecked():
+                    provisioner_script_path = self.generate_provisioner_script_user(parquet_file)
+                else:
+                    provisioner_script_path = self.generate_provisioner_script_root(parquet_file)
+
+                # Step 3: Update the spec file dynamically, pointing to the parquet in the target directory
+                self.update_spec_file(parquet_file, provisioner_script_path)
+
+                # Step 4: Run PyInstaller to create an executable package
+                self.run_pyinstaller(provisioner_script_path, parquet_file)
+
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to create the package: {str(e)}")
+
+    def update_spec_file(self, target_parquet_file, provisioner_script):
+        """
+        Dynamically updates the PyInstaller spec file to include the generated Python script and the copied Parquet file.
+        """
+        spec_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "provisioner.spec")
+        
+        with open(spec_file_path, 'w') as spec_file:
+            spec_file.write(f"""
+# -*- mode: python ; coding: utf-8 -*-
+
+a = Analysis(
+    ['{os.path.abspath(provisioner_script)}'],
+    pathex=[],
+    binaries=[],
+    datas=[('{os.path.abspath(target_parquet_file)}', '.')],
+    hiddenimports=['pyarrow', 'pyarrow.pandas_compat', 'pyarrow.lib', 'pyarrow.vendored.version', 'pyarrow.vendored', 'numpy', 'tkinter'],
+    hookspath=[],
+    hooksconfig={{}},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+)
+pyz = PYZ(a.pure)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.datas,
+    [],
+    name='provisioner',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=True,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+)
+            """)
+
     def run_pyinstaller(self, provisioner_script, parquet_file):
         """
         Runs PyInstaller to create an executable from the generated provisioner script.
         :param provisioner_script: Path to the generated Python script.
         :param parquet_file: Path to the selected Parquet file.
         """
-        # Handle the platform-specific path separator for --add-data
         if platform.system().lower() == 'windows':
             add_data = f'{parquet_file};.'
         else:
             add_data = f'{parquet_file}:.'
 
-        # Construct the PyInstaller command with extra hidden imports
         pyinstaller_command = [
             'pyinstaller',
-            '--onefile',                        # Generate a single-file executable
-            '--add-data', add_data,             # Include the Parquet file in the bundle
-            '--hidden-import', 'pyarrow',       # Ensure PyArrow is included
-            '--hidden-import', 'pyarrow.pandas_compat',  # Include pandas_compat submodule of PyArrow
-            '--hidden-import', 'pyarrow.lib',   # Ensure pyarrow.lib is included
-            '--hidden-import', 'pyarrow.vendored.version',  # Include pyarrow's vendored modules
-            '--hidden-import', 'pyarrow.vendored',  # Catch-all for pyarrow.vendored
-            '--hidden-import', 'numpy',         # Ensure NumPy is included
-            '--hidden-import', 'tkinter',       # Ensure Tkinter is included
-            provisioner_script                  # Script to package
+            '--onefile',                        
+            '--add-data', add_data,             
+            '--hidden-import', 'pyarrow',       
+            '--hidden-import', 'pyarrow.pandas_compat',  
+            '--hidden-import', 'pyarrow.lib',   
+            '--hidden-import', 'pyarrow.vendored.version',  
+            '--hidden-import', 'pyarrow.vendored',  
+            '--hidden-import', 'numpy',         
+            '--hidden-import', 'tkinter',       
+            provisioner_script                 
         ]
 
-        # Run the PyInstaller command
         try:
             subprocess.run(pyinstaller_command, check=True)
             QMessageBox.information(self, "Success", "Double-clickable package created successfully!")

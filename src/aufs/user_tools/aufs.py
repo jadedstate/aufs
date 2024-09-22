@@ -1084,6 +1084,11 @@ exe = EXE(
         else:
             add_data = f'{parquet_file}:.'
 
+        # Define paths for dist (output) and build directories
+        home_dir = str(Path.home())
+        dist_path = os.path.join(home_dir, '.aufs', 'dist')
+        build_path = os.path.join(home_dir, '.aufs', 'build')
+
         pyinstaller_command = [
             'pyinstaller',
             '--onefile',                        
@@ -1094,13 +1099,15 @@ exe = EXE(
             '--hidden-import', 'pyarrow.vendored.version',  
             '--hidden-import', 'pyarrow.vendored',  
             '--hidden-import', 'numpy',         
-            '--hidden-import', 'tkinter',       
+            '--hidden-import', 'tkinter',
+            '--distpath', dist_path,            # Specify output directory for the executable
+            '--workpath', build_path,           # Specify build directory
             provisioner_script                 
         ]
 
         try:
             subprocess.run(pyinstaller_command, check=True)
-            QMessageBox.information(self, "Success", "Double-clickable package created successfully!")
+            QMessageBox.information(self, "Success", f"Package created successfully! Files located in {dist_path}")
         except subprocess.CalledProcessError as e:
             QMessageBox.critical(self, "Error", f"PyInstaller failed: {str(e)}")
 

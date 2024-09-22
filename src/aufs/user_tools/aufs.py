@@ -11,7 +11,6 @@ import pyarrow.parquet as pq
 import platform
 import textwrap
 
-
 class AUFS(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -68,13 +67,25 @@ class AUFS(QMainWindow):
         layout.addWidget(self.checkbox_root_dir)
         layout.addWidget(self.checkbox_spare)
 
+    def get_embedded_parquet_path(self, filename):
+        """
+        Retrieves the full path to the embedded Parquet file.
+        """
+        if hasattr(sys, '_MEIPASS'):
+            # If running from a PyInstaller bundle, _MEIPASS is the temp folder where files are extracted
+            base_path = os.path.join(sys._MEIPASS, filename)
+        else:
+            # Use the local path if running as a script
+            base_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+        return base_path
+
     def show_aufs_info(self):
         """
         Show the AUFS Information dialog, including schema, metadata, and data from the Parquet file.
         """
         selected_item = self.schema_list.currentItem()
         if selected_item:
-            parquet_file = os.path.join(self.parquet_dir, selected_item.text())  # Full path to the Parquet file
+            parquet_file = self.get_embedded_parquet_path(selected_item.text())  # Path to embedded Parquet file
 
             try:
                 # Read the Parquet file
@@ -91,12 +102,6 @@ class AUFS(QMainWindow):
 
             except Exception as e:
                 print(f"Error reading Parquet file: {e}")
-
-    def placeholder_action(self):
-        """
-        Placeholder action for future functionality.
-        """
-        print("Placeholder action triggered.")
 
     def setup_aufs_directories(self):
         """
@@ -137,7 +142,7 @@ class AUFS(QMainWindow):
         """
         selected_item = self.schema_list.currentItem()
         if selected_item:
-            parquet_file = os.path.join(self.parquet_dir, selected_item.text())  # Full path to the Parquet file
+            parquet_file = self.get_embedded_parquet_path(selected_item.text())  # Path to embedded Parquet file
 
             try:
                 # Step 1: Read the Parquet file
@@ -1020,11 +1025,17 @@ class AUFS(QMainWindow):
         :param provisioner_script: Path to the generated Python script.
         :param parquet_file: Path to the selected Parquet file.
         """
-        # Construct the PyInstaller command with extra hidden imports for Tkinter and PyArrow
+        # Handle the platform-specific path separator for --add-data
+        if platform.system().lower() == 'windows':
+            add_data = f'{parquet_file};.'
+        else:
+            add_data = f'{parquet_file}:.'
+
+        # Construct the PyInstaller command with extra hidden imports
         pyinstaller_command = [
             'pyinstaller',
             '--onefile',                        # Generate a single-file executable
-            '--add-data', f'{parquet_file}{os.pathsep}.',  # Include the Parquet file in the bundle
+            '--add-data', add_data,             # Include the Parquet file in the bundle
             '--hidden-import', 'pyarrow',       # Ensure PyArrow is included
             '--hidden-import', 'pyarrow.pandas_compat',  # Include pandas_compat submodule of PyArrow
             '--hidden-import', 'pyarrow.lib',   # Ensure pyarrow.lib is included
@@ -1032,7 +1043,6 @@ class AUFS(QMainWindow):
             '--hidden-import', 'pyarrow.vendored',  # Catch-all for pyarrow.vendored
             '--hidden-import', 'numpy',         # Ensure NumPy is included
             '--hidden-import', 'tkinter',       # Ensure Tkinter is included
-            '--clean',                          # Clean build to avoid caching issues
             provisioner_script                  # Script to package
         ]
 

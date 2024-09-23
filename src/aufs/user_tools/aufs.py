@@ -1188,26 +1188,17 @@ exe = EXE(
         with open(bat_file_path, 'w') as bat_file:
             bat_file.write(bat_file_content)
 
-    def create_unix_sh_file(self, folder_name, executable_name, parquet_file_name):
+    def create_windows_bat_file(self, folder_name, executable_name, parquet_file_name):
         """
-        Creates a .sh file for Unix-like systems (Linux/macOS) to double-click and run the provisioner executable
-        with the Parquet file.
+        Creates a .bat file for Windows to double-click and run the provisioner executable with the Parquet file.
         """
-        sh_file_content = f"""#!/bin/bash
-        DIR="$(cd "$(dirname "$0")"/.. && pwd)"
-        $DIR/{executable_name} ./{parquet_file_name}
+        bat_file_content = f"""@echo off
+        cd /d %~dp0\\..
+        start {executable_name} ./{parquet_file_name}
         """
-        sh_file_path = os.path.join(folder_name, f"run_{executable_name}.sh")
-        with open(sh_file_path, 'w') as sh_file:
-            sh_file.write(sh_file_content)
-
-        # Make the .sh file executable
-        st = os.stat(sh_file_path)
-        os.chmod(sh_file_path, st.st_mode | stat.S_IEXEC)
-
-        # Make the .sh file executable
-        st = os.stat(sh_file_path)
-        os.chmod(sh_file_path, st.st_mode | stat.S_IEXEC)
+        bat_file_path = os.path.join(folder_name, f"run_{executable_name}.bat")
+        with open(bat_file_path, 'w') as bat_file:
+            bat_file.write(bat_file_content)
 
 class AUFSInfoDialog(QDialog):
     def __init__(self, schema, metadata, data, parent=None):

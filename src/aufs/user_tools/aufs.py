@@ -982,6 +982,39 @@ class AUFS(QMainWindow):
 
         return script_path
 
+    def package_executable_and_parquet(self, executable_name, parquet_file):
+        """
+        Moves the generated executable and Parquet file into a folder and zips the folder.
+        """
+        # Create a new folder with the name based on the executable name
+        folder_name = os.path.splitext(executable_name)[0]  # Remove the extension to get the folder name
+        os.makedirs(folder_name, exist_ok=True)
+
+        # Move the executable to the folder
+        executable_path = os.path.join(os.getcwd(), 'dist', executable_name)
+        shutil.move(executable_path, os.path.join(folder_name, executable_name))
+
+        # Move the Parquet file to the folder
+        shutil.copy(parquet_file, os.path.join(folder_name, os.path.basename(parquet_file)))
+
+        # Zip the folder
+        shutil.make_archive(folder_name, 'zip', folder_name)
+
+        # Inform the user
+        QMessageBox.information(self, "Success", f"Packaged and zipped into {folder_name}.zip")
+
+        def get_embedded_parquet_path(self, filename):
+            """
+            Retrieves the full path to the embedded Parquet file.
+            """
+            if hasattr(sys, '_MEIPASS'):
+                # If running from a PyInstaller bundle, _MEIPASS is the temp folder where files are extracted
+                base_path = os.path.join(sys._MEIPASS, filename)
+            else:
+                # Use the local path if running as a script (development mode)
+                base_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+            return base_path
+
     def show_aufs_info(self):
         """
         Show the AUFS Information dialog, including schema, metadata, and data from the Parquet file.
@@ -1117,28 +1150,25 @@ exe = EXE(
 
     def package_executable_and_parquet(self, executable_name, parquet_file):
         """
-        Moves the generated executable and Parquet file into a folder, adds a launcher executable,
-        and zips the folder.
+        Moves the generated executable and Parquet file into a folder and creates a double-clickable script
+        for both Windows and Unix-like systems (Linux/macOS).
         """
         # Create a new folder with the name based on the executable name
         folder_name = os.path.splitext(executable_name)[0]  # Remove the extension to get the folder name
         os.makedirs(folder_name, exist_ok=True)
 
-        # Move the main provisioner executable to the folder
+        # Move the executable to the folder
         executable_path = os.path.join(os.getcwd(), 'dist', executable_name)
         shutil.move(executable_path, os.path.join(folder_name, executable_name))
 
         # Move the Parquet file to the folder
         shutil.copy(parquet_file, os.path.join(folder_name, os.path.basename(parquet_file)))
 
-        # Create and compile the launcher script
-        launcher_script = self.create_launcher_script(folder_name, executable_name, os.path.basename(parquet_file))
-        self.run_pyinstaller(launcher_script, is_launcher=True)
+        # Create the Windows .bat script
+        self.create_windows_bat_file(folder_name, executable_name, os.path.basename(parquet_file))
 
-        # Move the compiled launcher to the folder
-        launcher_name = os.path.basename(launcher_script).replace('.py', '')
-        launcher_executable_path = os.path.join(os.getcwd(), 'dist', launcher_name)
-        shutil.move(launcher_executable_path, os.path.join(folder_name, launcher_name))
+        # Create the Unix .sh script
+        self.create_unix_sh_file(folder_name, executable_name, os.path.basename(parquet_file))
 
         # Zip the folder
         shutil.make_archive(folder_name, 'zip', folder_name)
@@ -1146,64 +1176,39 @@ exe = EXE(
         # Inform the user
         QMessageBox.information(self, "Success", f"Packaged and zipped into {folder_name}.zip")
 
-    def create_launcher_script(self, folder_name, executable_name, parquet_file_name):
+    def create_windows_bat_file(self, folder_name, executable_name, parquet_file_name):
         """
-        Generates a minimal launcher script that will run the main provisioner executable
-        with the Parquet file as an argument.
+        Creates a .bat file for Windows to double-click and run the provisioner executable with the Parquet file.
         """
-        launcher_script_path = os.path.join(folder_name, f"launch_{executable_name}.py")
-
-        launcher_script = f"""
-import subprocess
-import os
-
-# Get the current directory where the executable and Parquet file are located
-script_dir = os.path.dirname(os.path.abspath(__file__))
-
-# Path to the provisioner executable
-provisioner_exe = os.path.join(script_dir, "{executable_name}")
-
-# Path to the Parquet file
-parquet_file = os.path.join(script_dir, "{parquet_file_name}")
-
-# Run the provisioner with the Parquet file as an argument
-subprocess.run([provisioner_exe, parquet_file])
-"""
-
-        # Write the launcher script to the folder
-        with open(launcher_script_path, 'w') as launcher_file:
-            launcher_file.write(launcher_script)
-
-        return launcher_script_path
-
-    def run_pyinstaller(self, script_path, is_launcher=False):
+        bat_file_content = f"""@echo off
+        cd /d %~dp0\\..
+        start {executable_name} ./{parquet_file_name}
         """
-        Runs PyInstaller to create an executable from the generated script.
-        Does NOT embed the Parquet file into the executable, but will bundle the file afterward.
+        bat_file_path = os.path.join(folder_name, f"run_{executable_name}.bat")
+        with open(bat_file_path, 'w') as bat_file:
+            bat_file.write(bat_file_content)
+
+    def create_unix_sh_file(self, folder_name, executable_name, parquet_file_name):
         """
-        pyinstaller_command = [
-            'pyinstaller',
-            '--onefile',
-            '--hidden-import', 'pyarrow',
-            '--hidden-import', 'pyarrow.pandas_compat',
-            '--hidden-import', 'pyarrow.lib',
-            '--hidden-import', 'pyarrow.vendored.version',
-            '--hidden-import', 'pyarrow.vendored',
-            '--hidden-import', 'numpy',
-            '--hidden-import', 'tkinter',
-            script_path
-        ]
+        Creates a .sh file for Unix-like systems (Linux/macOS) to double-click and run the provisioner executable
+        with the Parquet file.
+        """
+        sh_file_content = f"""#!/bin/bash
+        DIR="$(cd "$(dirname "$0")"/.. && pwd)"
+        $DIR/{executable_name} ./{parquet_file_name}
+        """
+        sh_file_path = os.path.join(folder_name, f"run_{executable_name}.sh")
+        with open(sh_file_path, 'w') as sh_file:
+            sh_file.write(sh_file_content)
 
-        if is_launcher:
-            pyinstaller_command.append('--name')
-            pyinstaller_command.append(f"launcher_{Path(script_path).stem}")
+        # Make the .sh file executable
+        st = os.stat(sh_file_path)
+        os.chmod(sh_file_path, st.st_mode | stat.S_IEXEC)
 
-        try:
-            subprocess.run(pyinstaller_command, check=True)
-            QMessageBox.information(self, "Success", "Executable created successfully!")
-        except subprocess.CalledProcessError as e:
-            QMessageBox.critical(self, "Error", f"PyInstaller failed: {str(e)}")
-            
+        # Make the .sh file executable
+        st = os.stat(sh_file_path)
+        os.chmod(sh_file_path, st.st_mode | stat.S_IEXEC)
+
 class AUFSInfoDialog(QDialog):
     def __init__(self, schema, metadata, data, parent=None):
         super().__init__(parent)

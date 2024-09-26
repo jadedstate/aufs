@@ -12,6 +12,7 @@ import pyarrow.parquet as pq
 import platform
 import textwrap
 import stat
+import tempfile
 
 class AUFS(QMainWindow):
     def __init__(self):
@@ -1056,46 +1057,97 @@ exe = EXE(
         """
         Create a double-clickable package from the selected Parquet file using PyInstaller.
         Based on the state of checkboxes, determine which provisioning script to generate.
+        The packaging and working directory are moved to $HOME/.aufs/springs/{dest}/{protocol}/.tmp_{output_file_name}
         """
         selected_item = self.schema_list.currentItem()
         if selected_item:
             source_parquet_file = os.path.join(self.parquet_dir, selected_item.text())  # Full path to the Parquet file
-
+            
+            # Extract dest and protocol from the Parquet file name
+            parquet_filename = os.path.basename(source_parquet_file)
+            dest, protocol = self.extract_dest_and_protocol(parquet_filename)
+            
+            # Create the target working and final output directories
+            home_dir = str(Path.home())
+            final_output_dir = os.path.join(home_dir, '.aufs', 'springs', dest, protocol)
+            tmp_working_dir = os.path.join(final_output_dir, f'.tmp_{parquet_filename}')
+            
             try:
-                # Step 1: Copy the Parquet file to the script location
-                script_dir = os.path.dirname(os.path.abspath(__file__))
-                parquet_file = os.path.join(script_dir, os.path.basename(source_parquet_file))
+                # Ensure the directories exist
+                os.makedirs(tmp_working_dir, exist_ok=True)
+                os.makedirs(final_output_dir, exist_ok=True)
+
+                # Step 1: Copy the Parquet file to the temporary working directory
+                parquet_file = os.path.join(tmp_working_dir, os.path.basename(source_parquet_file))
                 shutil.copy(source_parquet_file, parquet_file)
 
                 # Step 2: Determine which script to generate based on the checkboxes
                 if self.checkbox_credentials.isChecked() and self.checkbox_root_dir.isChecked():
-                    # Both credentials and root dir are checked, use full script generation
                     provisioner_script_path = self.generate_provisioner_script(parquet_file)
                 elif not self.checkbox_credentials.isChecked() and not self.checkbox_root_dir.isChecked():
-                    # All unchecked, generate clean script with no dialogs or replacements
                     provisioner_script_path = self.generate_provisioner_script_clean(parquet_file)
                 elif not self.checkbox_root_dir.isChecked():
-                    # Mount point unchecked, generate script with only username and password prompts
                     provisioner_script_path = self.generate_provisioner_script_user(parquet_file)
                 else:
-                    # Only credentials unchecked, generate script with root (mount point) dialog
                     provisioner_script_path = self.generate_provisioner_script_root(parquet_file)
 
-                # Step 3: Run PyInstaller to create an executable package
+                # Step 3: Run PyInstaller to create an executable package (in temp dir)
                 self.run_pyinstaller(provisioner_script_path)
 
                 # Step 4: Handle the executable name properly on Windows
                 executable_name = os.path.basename(provisioner_script_path).replace('.py', '')
-                
-                # Check if we're on Windows and append '.exe' if necessary
                 if platform.system().lower() == 'windows':
                     executable_name += '.exe'
 
-                # Step 5: Package both the executable and the Parquet file together
-                self.package_executable_and_parquet(executable_name, parquet_file)
+                # Step 5: Package both the executable and the Parquet file together in the temp dir
+                self.package_executable_and_parquet(executable_name, parquet_file, tmp_working_dir)
+
+                # Step 6: Move the final ZIP from temp dir to the output dir and clean up
+                final_zip_file = f"{os.path.splitext(executable_name)[0]}.zip"
+                shutil.move(os.path.join(tmp_working_dir, final_zip_file), os.path.join(final_output_dir, final_zip_file))
+                
+                # Clean up the temporary working directory
+                shutil.rmtree(tmp_working_dir)
+
+                QMessageBox.information(self, "Success", f"Packaged and zipped into {final_output_dir}/{final_zip_file}")
 
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to create the package: {str(e)}")
+
+    def extract_dest_and_protocol(self, parquet_filename):
+        """
+        Extract 'dest' and 'protocol' from the Parquet filename by splitting on '-'.
+        Example: rowan-smb-005.parquet -> dest='rowan', protocol='smb'
+        """
+        parts = parquet_filename.split('-')
+        dest = parts[0]
+        protocol = parts[1] if len(parts) > 1 else "unknown"
+        return dest, protocol
+
+    def package_executable_and_parquet(self, executable_name, parquet_file, working_dir):
+        """
+        Moves the generated executable and Parquet file into a folder and creates a double-clickable script
+        for both Windows and Unix-like systems (Linux/macOS).
+        """
+        # Create a new folder inside the temporary working directory
+        package_dir = os.path.join(working_dir, os.path.splitext(executable_name)[0])
+        os.makedirs(package_dir, exist_ok=True)
+
+        # Move the executable to the package folder
+        executable_path = os.path.join(os.getcwd(), 'dist', executable_name)
+        shutil.move(executable_path, os.path.join(package_dir, executable_name))
+
+        # Move the Parquet file to the package folder
+        shutil.copy(parquet_file, os.path.join(package_dir, os.path.basename(parquet_file)))
+
+        # Create the Windows .bat script
+        self.create_windows_bat_file(package_dir, executable_name, os.path.basename(parquet_file))
+
+        # Create the Unix .sh script
+        self.create_unix_sh_file(package_dir, executable_name, os.path.basename(parquet_file))
+
+        # Zip the folder
+        shutil.make_archive(package_dir, 'zip', package_dir)
 
     def run_pyinstaller(self, provisioner_script):
         """
@@ -1120,34 +1172,6 @@ exe = EXE(
             QMessageBox.information(self, "Success", "Executable created successfully!")
         except subprocess.CalledProcessError as e:
             QMessageBox.critical(self, "Error", f"PyInstaller failed: {str(e)}")
-
-    def package_executable_and_parquet(self, executable_name, parquet_file):
-        """
-        Moves the generated executable and Parquet file into a folder and creates a double-clickable script
-        for both Windows and Unix-like systems (Linux/macOS).
-        """
-        # Create a new folder with the name based on the executable name
-        folder_name = os.path.splitext(executable_name)[0]  # Remove the extension to get the folder name
-        os.makedirs(folder_name, exist_ok=True)
-
-        # Move the executable to the folder
-        executable_path = os.path.join(os.getcwd(), 'dist', executable_name)
-        shutil.move(executable_path, os.path.join(folder_name, executable_name))
-
-        # Move the Parquet file to the folder
-        shutil.copy(parquet_file, os.path.join(folder_name, os.path.basename(parquet_file)))
-
-        # Create the Windows .bat script
-        self.create_windows_bat_file(folder_name, executable_name, os.path.basename(parquet_file))
-
-        # Create the Unix .sh script
-        self.create_unix_sh_file(folder_name, executable_name, os.path.basename(parquet_file))
-
-        # Zip the folder
-        shutil.make_archive(folder_name, 'zip', folder_name)
-
-        # Inform the user
-        QMessageBox.information(self, "Success", f"Packaged and zipped into {folder_name}.zip")
 
     def create_windows_bat_file(self, folder_name, executable_name, parquet_file_name):
         """

@@ -982,39 +982,6 @@ class AUFS(QMainWindow):
 
         return script_path
 
-    def package_executable_and_parquet(self, executable_name, parquet_file):
-        """
-        Moves the generated executable and Parquet file into a folder and zips the folder.
-        """
-        # Create a new folder with the name based on the executable name
-        folder_name = os.path.splitext(executable_name)[0]  # Remove the extension to get the folder name
-        os.makedirs(folder_name, exist_ok=True)
-
-        # Move the executable to the folder
-        executable_path = os.path.join(os.getcwd(), 'dist', executable_name)
-        shutil.move(executable_path, os.path.join(folder_name, executable_name))
-
-        # Move the Parquet file to the folder
-        shutil.copy(parquet_file, os.path.join(folder_name, os.path.basename(parquet_file)))
-
-        # Zip the folder
-        shutil.make_archive(folder_name, 'zip', folder_name)
-
-        # Inform the user
-        QMessageBox.information(self, "Success", f"Packaged and zipped into {folder_name}.zip")
-
-        def get_embedded_parquet_path(self, filename):
-            """
-            Retrieves the full path to the embedded Parquet file.
-            """
-            if hasattr(sys, '_MEIPASS'):
-                # If running from a PyInstaller bundle, _MEIPASS is the temp folder where files are extracted
-                base_path = os.path.join(sys._MEIPASS, filename)
-            else:
-                # Use the local path if running as a script (development mode)
-                base_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
-            return base_path
-
     def show_aufs_info(self):
         """
         Show the AUFS Information dialog, including schema, metadata, and data from the Parquet file.
@@ -1117,8 +1084,14 @@ exe = EXE(
                 # Step 3: Run PyInstaller to create an executable package
                 self.run_pyinstaller(provisioner_script_path)
 
-                # Step 4: Package both executable and Parquet file together
+                # Step 4: Handle the executable name properly on Windows
                 executable_name = os.path.basename(provisioner_script_path).replace('.py', '')
+                
+                # Check if we're on Windows and append '.exe' if necessary
+                if platform.system().lower() == 'windows':
+                    executable_name += '.exe'
+
+                # Step 5: Package both the executable and the Parquet file together
                 self.package_executable_and_parquet(executable_name, parquet_file)
 
             except Exception as e:
@@ -1181,7 +1154,7 @@ exe = EXE(
         Creates a .bat file for Windows to double-click and run the provisioner executable with the Parquet file.
         """
         bat_file_content = f"""@echo off
-        cd /d %~dp0\\..
+        cd /d %~dp0\\
         IF EXIST "{executable_name}" (
             IF EXIST "{parquet_file_name}" (
                 start {executable_name} ./{parquet_file_name}
@@ -1204,8 +1177,8 @@ exe = EXE(
         with the Parquet file.
         """
         sh_file_content = f"""#!/bin/bash
-        DIR="$(cd "$(dirname "$0")"/.. && pwd)"
-        $DIR/{executable_name}/{executable_name} ./{parquet_file_name}
+        DIR="$(cd "$(dirname "$0")"/ && pwd)"
+        $DIR/{executable_name} ./{parquet_file_name}
         """
         sh_file_path = os.path.join(folder_name, f"run_{executable_name}.sh")
         with open(sh_file_path, 'w') as sh_file:

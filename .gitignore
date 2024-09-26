@@ -163,9 +163,5 @@ cython_debug/
 */.DS_Store
 *.parquet
 .DS_Store
-/rowan-005-smb_20240926T222233Z
-/rowan-005-smb_20240926T222233Z
-/rowan-005-smb_20240926T222233Z
-rowan-005-smb_20240926T222233Z/rowan-005-smb_20240926T222233Z.exe
-rowan-005-smb_20240926T222233Z/run_rowan-005-smb_20240926T222233Z.exe.bat
-rowan-005-smb_20240926T222233Z/run_rowan-005-smb_20240926T222233Z.exe.sh
+*-smb_20*
+*.DS_Store

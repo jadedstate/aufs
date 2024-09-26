@@ -1127,7 +1127,7 @@ exe = EXE(
     def package_executable_and_parquet(self, executable_name, parquet_file, working_dir):
         """
         Moves the generated executable and Parquet file into a folder and creates a double-clickable script
-        for both Windows and Unix-like systems (Linux/macOS).
+        based on the platform (Windows or macOS/Linux).
         """
         # Create a new folder inside the temporary working directory
         package_dir = os.path.join(working_dir, os.path.splitext(executable_name)[0])
@@ -1140,14 +1140,24 @@ exe = EXE(
         # Move the Parquet file to the package folder
         shutil.copy(parquet_file, os.path.join(package_dir, os.path.basename(parquet_file)))
 
-        # Create the Windows .bat script
-        self.create_windows_bat_file(package_dir, executable_name, os.path.basename(parquet_file))
+        # Determine platform and create appropriate run file
+        system_platform = platform.system().lower()
 
-        # Create the Unix .sh script
-        self.create_unix_sh_file(package_dir, executable_name, os.path.basename(parquet_file))
+        if system_platform == 'windows':
+            # Create the Windows .bat script
+            self.create_windows_bat_file(package_dir, executable_name, os.path.basename(parquet_file))
+        elif system_platform == 'darwin':
+            # Create the macOS .applescript file
+            self.create_darwin_run_file(package_dir, executable_name, os.path.basename(parquet_file))
+        else:
+            # Create the Unix/Linux .sh script
+            self.create_unix_sh_file(package_dir, executable_name, os.path.basename(parquet_file))
 
         # Zip the folder
         shutil.make_archive(package_dir, 'zip', package_dir)
+
+        # Return the path to the zip file for further use if needed
+        return f"{package_dir}.zip"
 
     def run_pyinstaller(self, provisioner_script):
         """
@@ -1194,6 +1204,35 @@ exe = EXE(
         bat_file_path = os.path.join(folder_name, f"run_{executable_name}.bat")
         with open(bat_file_path, 'w') as bat_file:
             bat_file.write(bat_file_content)
+
+    def create_darwin_run_file(self, folder_name, executable_name, parquet_file_name):
+        """
+        Creates an AppleScript file for macOS to double-click and run the provisioner executable
+        with the Parquet file.
+        """
+        # AppleScript content that runs the executable with the parquet file
+        applescript_content = f"""
+        set scriptDir to POSIX path of (path to me as text) & "{folder_name}"
+        set executablePath to quoted form of (scriptDir & "{executable_name}")
+        set parquetPath to quoted form of (scriptDir & "{parquet_file_name}")
+
+        -- Open Terminal and run the executable with the parquet file
+        tell application "Terminal"
+            do script executablePath & " " & parquetPath
+            activate
+        end tell
+        """
+
+        # Save the AppleScript file
+        applescript_path = os.path.join(folder_name, f"run_{executable_name}.applescript")
+        with open(applescript_path, 'w') as applescript_file:
+            applescript_file.write(applescript_content)
+
+        # Optionally compile the AppleScript to a .app for better user experience
+        compiled_script_path = os.path.join(folder_name, f"run_{executable_name}.app")
+        subprocess.run(['osacompile', '-o', compiled_script_path, applescript_path])
+
+        return applescript_path, compiled_script_path
 
     def create_unix_sh_file(self, folder_name, executable_name, parquet_file_name):
         """

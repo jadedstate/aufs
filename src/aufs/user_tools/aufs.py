@@ -1188,6 +1188,9 @@ exe = EXE(
         """
         Creates a .bat file for Windows to double-click and run the provisioner executable with the Parquet file.
         """
+        # Strip '.exe' from the bat file name, but leave the command to run the executable intact
+        executable_name_no_ext = executable_name.replace('.exe', '')
+
         bat_file_content = f"""@echo off
         cd /d %~dp0\\
         IF EXIST "{executable_name}" (
@@ -1202,7 +1205,8 @@ exe = EXE(
             pause
         )
         """
-        bat_file_path = os.path.join(folder_name, f"run_{executable_name}.bat")
+        # Use the stripped version of the executable name for the bat file name
+        bat_file_path = os.path.join(folder_name, f"run_{executable_name_no_ext}.bat")
         with open(bat_file_path, 'w') as bat_file:
             bat_file.write(bat_file_content)
 

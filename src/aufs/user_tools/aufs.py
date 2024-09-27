@@ -34,9 +34,6 @@ class AUFS(QMainWindow):
         self.package_button = QPushButton("Create Package", self)
         self.aufs_info_button = QPushButton("auFS Info", self)
         self.template_button = QPushButton("Provision AUFS", self)  # Provision button
-        layout.addWidget(self.package_button)
-        layout.addWidget(self.aufs_info_button)
-        layout.addWidget(self.template_button)
 
         self.package_button.clicked.connect(self.create_double_clickable_package)
         self.aufs_info_button.clicked.connect(self.show_aufs_info)
@@ -69,6 +66,10 @@ class AUFS(QMainWindow):
         layout.addWidget(self.checkbox_credentials)
         layout.addWidget(self.checkbox_root_dir)
         layout.addWidget(self.checkbox_spare)
+
+        layout.addWidget(self.package_button)
+        layout.addWidget(self.aufs_info_button)
+        layout.addWidget(self.template_button)
 
     def setup_aufs_directories(self):
         """
@@ -1207,32 +1208,57 @@ exe = EXE(
 
     def create_darwin_run_file(self, folder_name, executable_name, parquet_file_name):
         """
-        Creates an AppleScript file for macOS to double-click and run the provisioner executable
-        with the Parquet file.
+        Creates an AppleScript file for macOS that runs the provisioner executable with the Parquet file
+        and compiles it into a double-clickable .app, showing a non-blocking progress window.
         """
-        # AppleScript content that runs the executable with the parquet file
-        applescript_content = f"""
-        set scriptDir to POSIX path of (path to me as text) & "{folder_name}"
-        set executablePath to quoted form of (scriptDir & "{executable_name}")
-        set parquetPath to quoted form of (scriptDir & "{parquet_file_name}")
+        applescript_content = f'''
+        on run
+            -- Display a progress dialog with a "Click to proceed - a dialog asking for mount point will follow in a few moments" button that does nothing
+            display dialog "Provisioning AUFS data..." buttons {{"Click to proceed - a dialog asking for mount point will follow in a few moments"}} default button "Click to proceed - a dialog asking for mount point will follow in a few moments" giving up after 0
 
-        -- Open Terminal and run the executable with the parquet file
-        tell application "Terminal"
-            do script executablePath & " " & parquetPath
-            activate
-        end tell
-        """
+            -- Get the path to the app itself and convert it to a POSIX path
+            set appPath to (POSIX path of (path to me))
 
-        # Save the AppleScript file
+            -- Get the directory of the .app
+            set appDir to do shell script "dirname " & quoted form of appPath
+
+            -- Construct the full paths to the executable and Parquet file
+            set execPath to appDir & "/{executable_name}"
+            set parquetPath to appDir & "/{parquet_file_name}"
+
+            -- Try to run the executable with the Parquet file
+            try
+                do shell script quoted form of execPath & " " & quoted form of parquetPath
+
+                -- Once done, replace the progress dialog with a success message and an ok button
+                display dialog "Provisioning complete!" buttons {{"OK"}} default button "OK" with icon note
+
+            on error errorMessage number errorNumber
+                -- Replace the progress dialog with an error message and an ok button
+                display dialog "An error occurred during provisioning: " & errorMessage buttons {{"OK"}} default button "OK" with icon caution
+            end try
+        end run
+       '''
+
+        # Write the .applescript file inside the package folder
         applescript_path = os.path.join(folder_name, f"run_{executable_name}.applescript")
         with open(applescript_path, 'w') as applescript_file:
             applescript_file.write(applescript_content)
 
-        # Optionally compile the AppleScript to a .app for better user experience
-        compiled_script_path = os.path.join(folder_name, f"run_{executable_name}.app")
-        subprocess.run(['osacompile', '-o', compiled_script_path, applescript_path])
+        # Compile the AppleScript into a .app using osacompile
+        app_bundle_path = os.path.join(folder_name, f"run_{executable_name}.app")
+        compile_command = ['osacompile', '-o', app_bundle_path, applescript_path]
 
-        return applescript_path, compiled_script_path
+        try:
+            subprocess.run(compile_command, check=True)
+            print(f"AppleScript compiled to: {app_bundle_path}")
+        except subprocess.CalledProcessError as e:
+            print(f"Error compiling AppleScript: {e}")
+            return
+
+        # Remove the .applescript file after compiling
+        os.remove(applescript_path)
+        print(f"Temporary AppleScript file removed: {applescript_path}")
 
     def create_unix_sh_file(self, folder_name, executable_name, parquet_file_name):
         """

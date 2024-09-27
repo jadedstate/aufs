@@ -1218,7 +1218,7 @@ exe = EXE(
         applescript_content = f'''
         on run
             -- Display a progress dialog with a "Click to proceed - a dialog asking for mount point will follow in a few moments" button that does nothing
-            display dialog "Provisioning AUFS data..." buttons {{"Click to proceed - a dialog asking for mount point will follow in a few moments"}} default button "Click to proceed - a dialog asking for mount point will follow in a few moments" giving up after 0
+            display dialog "Provisioning AUFS data..." buttons {{"Click to proceed - a dialog asking for mount point will follow in a few moments"}} default button "Click to proceed - a dialog asking for mount point will follow in a few moments"
 
             -- Get the path to the app itself and convert it to a POSIX path
             set appPath to (POSIX path of (path to me))

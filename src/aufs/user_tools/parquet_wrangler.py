@@ -173,6 +173,7 @@ class WranglerApp(QMainWindow):
         # Text input for specifying the data's location (e.g., smb_server/share)
         data_location_label = QLabel("Data Location:")
         self.data_location_input = QLineEdit()
+        self.data_location_input.setText("18.175.206.107/XXX_data")
         data_layout.addWidget(data_location_label)
         data_layout.addWidget(self.data_location_input)
 
@@ -342,8 +343,25 @@ class WranglerApp(QMainWindow):
                 name_input.text(): f"{uname_input.text()}:{password_input.text()}"
             }
 
-            # Append to the CSV file
-            with open(csv_location, 'a') as csvfile:
+            # Check if the CSV file exists
+            if not os.path.exists(csv_location):
+                # Prompt the user if they'd like to create a new CSV file
+                reply = QMessageBox.question(
+                    self, 
+                    "Create CSV File", 
+                    f"The CSV file for {protocol} does not exist. Would you like to create a new one?", 
+                    QMessageBox.Yes | QMessageBox.No, 
+                    QMessageBox.No
+                )
+
+                if reply == QMessageBox.No:
+                    return  # Exit if the user doesn't want to create the file
+
+            # Create directories if they don't exist
+            os.makedirs(os.path.dirname(csv_location), exist_ok=True)
+
+            # Append to the CSV file (or create if it doesn't exist)
+            with open(csv_location, 'a', newline='') as csvfile:
                 csv_writer = csv.writer(csvfile)
                 csv_writer.writerow(new_user_data.values())
 

@@ -33,11 +33,9 @@ class AUFS(QMainWindow):
         # Add buttons
         self.package_button = QPushButton("Create Package", self)
         self.aufs_info_button = QPushButton("auFS Info", self)
-        self.template_button = QPushButton("Provision AUFS", self)  # Provision button
 
         self.package_button.clicked.connect(self.create_double_clickable_package)
         self.aufs_info_button.clicked.connect(self.show_aufs_info)
-        self.template_button.clicked.connect(self.provision_aufs)
 
         # Add the list widget for schema files
         self.schema_list = QListWidget(self)
@@ -69,7 +67,6 @@ class AUFS(QMainWindow):
 
         layout.addWidget(self.package_button)
         layout.addWidget(self.aufs_info_button)
-        layout.addWidget(self.template_button)
 
     def setup_aufs_directories(self):
         """
@@ -102,277 +99,6 @@ class AUFS(QMainWindow):
         # Add files to the schema list
         for file in file_list:
             self.schema_list.addItem(file)
-
-    def provision_aufs(self):
-        """
-        Provision AUFS by detecting the current platform and executing the corresponding script from the first column of the Parquet file.
-        The checkboxes control whether the user is prompted for username, password, or root directory.
-        """
-        selected_item = self.schema_list.currentItem()
-        if selected_item:
-            parquet_file = self.get_embedded_parquet_path(selected_item.text())  # Path to embedded Parquet file
-
-            try:
-                # Step 1: Read the Parquet file
-                parquet_table = pq.read_table(parquet_file)
-                metadata = parquet_table.schema.metadata
-
-                if metadata:
-                    # Step 2: Get the platform key
-                    platform_key = self.get_platform_key()
-
-                    # Step 3: Extract the platform scripts metadata
-                    platform_scripts = json.loads(metadata.get(b'platform_scripts', '{}').decode('utf-8'))
-
-                    # Step 4: Find the row index for the current platform
-                    if platform_key in platform_scripts:
-                        row_index = int(platform_scripts[platform_key])  # Convert the string index to an integer
-
-                        # Step 5: Extract the script from the first column
-                        script = parquet_table.to_pandas().iloc[row_index, 0]  # Always get the first column
-
-                        # **HANDLE CHECKBOX LOGIC**
-                        # If a checkbox is unchecked, skip prompts and replacements for username, password, or mount point.
-
-                        # 1. Handle Credentials (User & Password) checkbox
-                        if self.checkbox_credentials.isChecked():
-                            # Prompt for username and replace "UNAME" in the script if checked
-                            username = self.prompt_for_username()
-                            password = self.prompt_for_password()
-                            if username:
-                                script = script.replace("UNAME", username)
-                            if password:
-                                script = script.replace("PSSWD", password)
-                        else:
-                            # Skip username and password prompt and remove UNAME and PSSWD placeholders if unchecked
-                            script = script.replace("UNAME", "").replace("PSSWD", "")
-
-                        # 2. Handle Root Dir (Mount Point) checkbox
-                        if self.checkbox_root_dir.isChecked():
-                            # Prompt for mount point and replace "MNTPOINT" in the script if checked
-                            mount_point = self.prompt_for_mount_point()
-                            if mount_point:
-                                script = script.replace("MNTPOINT", mount_point)
-                        else:
-                            # Skip mount point prompt and remove MNTPOINT placeholder if unchecked
-                            script = script.replace("MNTPOINT", "")
-
-                        # Step 6: Execute the script
-                        self.execute_embedded_script(script)
-
-                    else:
-                        print(f"No script found for platform: {platform_key}")
-                else:
-                    print("No metadata found in the Parquet file.")
-            except Exception as e:
-                print(f"Error reading Parquet file: {e}")
-
-    def prompt_for_username(self):
-        """
-        Prompts the user for their username.
-        """
-        username, ok = QInputDialog.getText(self, "Username", "Enter your username:")
-        if ok and username:
-            return username
-        return None
-
-    def prompt_for_password(self):
-        """
-        Prompts the user for their password.
-        """
-        password, ok = QInputDialog.getText(self, "Password", "Enter your password:", QLineEdit.Password)
-        if ok and password:
-            return password
-        return None
-
-    def prompt_for_mount_point(self):
-        """
-        Prompts the user for the root directory (mount point) to use.
-        - On Windows, it asks for a drive letter.
-        - On macOS/Linux, it asks for a directory.
-        """
-        system_platform = platform.system().lower()
-
-        if system_platform == 'windows':
-            # Ask for a drive letter on Windows
-            mount_point, ok = QInputDialog.getText(self, "Drive Letter", "Enter a drive letter (e.g., Z):", QLineEdit.Normal, "Z")
-            if ok and mount_point:
-                return mount_point.upper()  # Normalize to uppercase drive letter
-        else:
-            # Ask for a directory on macOS/Linux
-            mount_point = QFileDialog.getExistingDirectory(self, "Select Mount Point")
-            if mount_point:
-                return mount_point
-        return None
-
-    def get_shell_command(self):
-        """
-        Return the appropriate shell command and flag for the current platform.
-        """
-        system_platform = platform.system().lower()
-
-        if system_platform == "windows":
-            # Use PowerShell for running PowerShell script
-            shell = "powershell"
-            flag = "-Command"
-        elif system_platform == "darwin" or system_platform == "linux":
-            shell = "bash"  # Use bash on macOS and Linux
-            flag = "-c"
-        else:
-            raise Exception(f"Unsupported platform: {system_platform}")
-
-        return shell, flag
-
-    def execute_embedded_script(self, script):
-        """
-        Execute the platform-specific script extracted from the Parquet file.
-        Run the script quietly and only display success or failure.
-        """
-        shell, flag = self.get_shell_command()
-
-        try:
-            if script:
-                # **DEBUGGING**: Print the script for review
-                print(f"Executing the following script: \n{script}")
-
-                # Execute the script in the correct shell and capture both stdout and stderr
-                print(f"Executing script using {shell}:")
-                result = subprocess.run([shell, flag, script], check=True, capture_output=True, text=True)
-
-                # Print the output and errors for debugging
-                print(f"Stdout: {result.stdout}")
-                print(f"Stderr: {result.stderr}")
-
-                # Check if the script ran successfully
-                print("Script executed successfully.")
-            else:
-                print("No script found to execute.")
-        except subprocess.CalledProcessError as e:
-            # If an error occurs, report the failure
-            print(f"Error executing script: {e}")
-            print(f"Script execution failed with stderr: {e.stderr}")
-            
-    def run_provisioning_workflow(self, parquet_path):
-        """
-        The full workflow of reading the Parquet file, extracting the platform-specific script, and executing it.
-        """
-        try:
-            # Step 1: Detect platform
-            platform_key = self.get_platform_key()
-            print(f"Detected platform: {platform_key}")
-
-            # Step 2: Read Parquet file
-            schema, script = self.read_parquet_for_platform(parquet_path, platform_key)
-
-            if script:
-                print(f"Found script for platform '{platform_key}':\n{script}")
-                # Step 3: Execute script
-                self.execute_script(script)
-            else:
-                print(f"No script found for platform: {platform_key}")
-                QMessageBox.warning(self, "No Script", f"No script found for platform '{platform_key}'.")
-
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"An error occurred during provisioning: {str(e)}")
-
-    def get_platform_key(self):
-        """
-        Detect the current platform and return the corresponding key to use in the Parquet file metadata.
-        """
-        if platform.system().lower() == "windows":
-            return "win_script"
-        elif platform.system().lower() == "darwin":
-            return "darwin_script"
-        elif platform.system().lower() == "linux":
-            return "linux_script"
-        else:
-            raise Exception("Unsupported platform!")
-
-    def read_parquet_for_platform(self, parquet_path, platform_key):
-        """
-        Reads the Parquet file and extracts schema and platform-specific script from the metadata.
-        :param parquet_path: Path to the Parquet file.
-        :param platform_key: Key to identify which script to extract based on the platform.
-        :return: Tuple of schema fields and script.
-        """
-        # Open parquet file using pyarrow
-        parquet_file = pq.ParquetFile(parquet_path)
-        metadata = parquet_file.metadata
-        print('Parquet md: ')
-        print(metadata)
-
-        # Extract key-value metadata and look for platform-specific script
-        schema_fields = metadata.schema.names
-        script = None
-
-        if metadata is not None:
-            kv_metadata = metadata.metadata
-            if kv_metadata is not None and platform_key.encode('utf-8') in kv_metadata:
-                script = kv_metadata[platform_key.encode('utf-8')].decode('utf-8')
-
-        return schema_fields, script
-
-    def provision_schema(self):
-        """
-        Provision AUFS by detecting the current platform, creating directories, and executing the corresponding script.
-        """
-        selected_item = self.schema_list.currentItem()
-        if selected_item:
-            parquet_file = os.path.join(self.parquet_dir, selected_item.text())  # Full path to the Parquet file
-
-            try:
-                # Step 1: Read the Parquet file
-                parquet_table = pq.read_table(parquet_file)
-                self.metadata = parquet_table.schema.metadata  # Store metadata for directory creation
-
-                if self.metadata:
-                    # Step 2: Create directory tree
-                    self.create_directory_tree()
-
-                    # Step 3: Get the platform key
-                    platform_key = self.get_platform_key()
-
-                    # Step 4: Extract the platform scripts metadata
-                    platform_scripts = json.loads(self.metadata.get(b'platform_scripts', '{}').decode('utf-8'))
-
-                    # Step 5: Find the row index for the current platform
-                    if platform_key in platform_scripts:
-                        row_index = int(platform_scripts[platform_key])  # Convert the string index to an integer
-
-                        # Step 6: Extract the script from the first column, regardless of its name
-                        script = parquet_table.to_pandas().iloc[row_index, 0]  # Always get the first column, regardless of the name
-
-                        # Step 7: Execute the script
-                        subprocess.run(script, shell=True)
-                    else:
-                        print(f"No script found for platform: {platform_key}")
-                else:
-                    print("No metadata found in the Parquet file.")
-            except Exception as e:
-                print(f"Error reading Parquet file: {e}")
-
-    def create_directory_tree(self):
-        # Step 1: Extract the directory tree from the metadata
-        directory_tree = json.loads(self.metadata[b'directory_tree'].decode('utf-8'))
-        uuid_dirname_mapping = json.loads(self.metadata[b'uuid_dirname_mapping'].decode('utf-8'))
-
-        # Step 2: Traverse the directory tree
-        for parent_uuid, children in directory_tree.items():
-            # Map parent UUID to directory name
-            parent_dir = uuid_dirname_mapping.get(parent_uuid)
-            if not parent_dir:
-                continue
-
-            # Create the parent directory
-            parent_dir_path = os.path.join(self.parquet_dir, parent_dir)
-            os.makedirs(parent_dir_path, exist_ok=True)
-
-            # Create child directories
-            for child in children:
-                child_name = uuid_dirname_mapping.get(child["id"])
-                if child_name:
-                    child_dir_path = os.path.join(parent_dir_path, child_name)
-                    os.makedirs(child_dir_path, exist_ok=True)
 
     def generate_provisioner_script(self, parquet_file):
         """
@@ -1009,7 +735,7 @@ class AUFS(QMainWindow):
         """
         selected_item = self.schema_list.currentItem()
         if selected_item:
-            parquet_file = self.get_embedded_parquet_path(selected_item.text())  # Path to embedded Parquet file
+            parquet_file = os.path.join(self.parquet_dir, selected_item.text())  # Path to embedded Parquet file
 
             try:
                 # Read the Parquet file
@@ -1022,7 +748,7 @@ class AUFS(QMainWindow):
 
                 # Show the info dialog
                 info_dialog = AUFSInfoDialog(schema=schema, metadata=metadata, data=data, parent=self)
-                info_dialog.exec_()
+                info_dialog.exec()
 
             except Exception as e:
                 print(f"Error reading Parquet file: {e}")
@@ -1246,8 +972,8 @@ exe = EXE(
             display dialog "Provisioning AUFS data..." buttons {{"You may need to go to --Privacy & Security again after clicking this button"}} with icon note
 
             -- Construct the full paths to the executable and Parquet file
-            set execPath to chosenPath & "/{executable_name}"
-            set parquetPath to chosenPath & "/{parquet_file_name}"
+            set execPath to chosenPath & "/{{executable_name}}"
+            set parquetPath to chosenPath & "/{{parquet_file_name}}"
 
             -- Try to run the executable with the Parquet file
             try

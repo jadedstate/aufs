@@ -55,17 +55,17 @@ class AUFS(QMainWindow):
         # With a single checkbox for user credentials:
         self.checkbox_credentials = QCheckBox("User Credentials (Username & Password)", self)
         self.checkbox_root_dir = QCheckBox("Root Dir (Mount Point)", self)
-        self.checkbox_spare = QCheckBox("Spare", self)
+        self.checkbox_win_mount_point_not_letter = QCheckBox("Prompt for Mount Point on Windows", self)
 
         # Set checkboxes to be checked by default
         self.checkbox_credentials.setChecked(True)
         self.checkbox_root_dir.setChecked(True)
-        self.checkbox_spare.setChecked(False)
+        self.checkbox_win_mount_point_not_letter.setChecked(False)
 
         # Add checkboxes to the layout
         layout.addWidget(self.checkbox_credentials)
         layout.addWidget(self.checkbox_root_dir)
-        layout.addWidget(self.checkbox_spare)
+        layout.addWidget(self.checkbox_win_mount_point_not_letter)
 
         layout.addWidget(self.package_button)
         layout.addWidget(self.aufs_info_button)
@@ -188,14 +188,14 @@ class AUFS(QMainWindow):
     def prompt_for_mount_point(self):
         """
         Prompts the user for the root directory (mount point) to use.
-        - On Windows, it asks for a drive letter or mount point depending on the "spare" checkbox.
+        - On Windows, it asks for a drive letter or mount point depending on the "win_mount_point_not_letter" checkbox.
         - On macOS/Linux, it asks for a directory.
         """
         system_platform = platform.system().lower()
 
         if system_platform == 'windows':
-            if self.checkbox_spare.isChecked():
-                # Prompt for a mount point instead of a drive letter when "spare" checkbox is checked
+            if self.checkbox_win_mount_point_not_letter.isChecked():
+                # Prompt for a mount point instead of a drive letter when "win_mount_point_not_letter" checkbox is checked
                 mount_point = QFileDialog.getExistingDirectory(self, "Select Mount Point")
                 if mount_point:
                     return mount_point
@@ -203,7 +203,7 @@ class AUFS(QMainWindow):
                     QMessageBox.warning(self, "Warning", "You must select a valid mount point.")
                     return None
             else:
-                # Ask for a drive letter if the "spare" checkbox is not checked
+                # Ask for a drive letter if the "win_mount_point_not_letter" checkbox is not checked
                 mount_point, ok = QInputDialog.getText(self, "Drive Letter", "Enter a drive letter (e.g., Z):", QLineEdit.Normal, "Z")
                 if ok and mount_point:
                     return mount_point.upper()  # Normalize to uppercase drive letter
@@ -391,7 +391,7 @@ class AUFS(QMainWindow):
     def generate_provisioner_script(self, parquet_file):
         """
         Generates a Python script with the provisioning logic for the selected Parquet file.
-        Adjusts for using mount points instead of drive letters on Windows if the 'spare' checkbox is checked.
+        Adjusts for using mount points instead of drive letters on Windows if the 'win_mount_point_not_letter' checkbox is checked.
         :param parquet_file: The path to the selected Parquet file.
         :return: The path to the generated Python script.
         """
@@ -467,9 +467,9 @@ class AUFS(QMainWindow):
                 self.username = simpledialog.askstring("Username", "Enter your username:")
                 self.password = simpledialog.askstring("Password", "Enter your password:", show='*')
 
-                # Platform-specific handling (Handle the 'spare' checkbox)
-                if platform.system().lower() == 'windows' and not {str(self.checkbox_spare.isChecked()).lower()}:
-                    # If 'spare' is NOT checked, prompt for drive letter on Windows
+                # Platform-specific handling (Handle the 'win_mount_point_not_letter' checkbox)
+                if platform.system().lower() == 'windows' and not {str(self.checkbox_win_mount_point_not_letter.isChecked()).lower()}:
+                    # If 'win_mount_point_not_letter' is NOT checked, prompt for drive letter on Windows
                     self.mount_point = simpledialog.askstring("Drive Letter", "Enter a drive letter (e.g., Z):", initialvalue="Z")
 
                     if not self.mount_point:
@@ -484,7 +484,7 @@ class AUFS(QMainWindow):
                         messagebox.showerror("Error", "Invalid drive letter. Please enter a valid drive letter (e.g., Z).")
                         sys.exit(1)
                 else:
-                    # Prompt for mount point using a directory browser for macOS/Linux, or if 'spare' is checked for Windows
+                    # Prompt for mount point using a directory browser for macOS/Linux, or if 'win_mount_point_not_letter' is checked for Windows
                     self.mount_point = filedialog.askdirectory(title="Select Mount Point")
 
                     if not self.mount_point:
@@ -729,7 +729,7 @@ class AUFS(QMainWindow):
     def generate_provisioner_script_root(self, parquet_file):
         """
         Generates a Python script with one dialog asking for a drive letter (Windows) or a directory (macOS/Linux).
-        Adjusts for using mount points instead of drive letters on Windows if the 'spare' checkbox is checked.
+        Adjusts for using mount points instead of drive letters on Windows if the 'win_mount_point_not_letter' checkbox is checked.
         :param parquet_file: The path to the selected Parquet file.
         :return: The path to the generated Python script.
         """
@@ -775,9 +775,9 @@ class AUFS(QMainWindow):
                 root = tk.Tk()
                 root.withdraw()  # Hide the root window
 
-                # Handle mount point logic based on platform (with 'spare' checkbox handling)
-                if platform.system().lower() == 'windows' and not {str(self.checkbox_spare.isChecked()).lower()}:
-                    # If 'spare' is NOT checked, prompt for drive letter on Windows
+                # Handle mount point logic based on platform (with 'win_mount_point_not_letter' checkbox handling)
+                if platform.system().lower() == 'windows' and not {str(self.checkbox_win_mount_point_not_letter.isChecked()).lower()}:
+                    # If 'win_mount_point_not_letter' is NOT checked, prompt for drive letter on Windows
                     self.mount_point = simpledialog.askstring("Drive Letter", "Enter a drive letter (e.g., Z):", initialvalue="Z")
                     if not self.mount_point:
                         messagebox.showerror("Error", "You must provide a drive letter.")
@@ -787,7 +787,7 @@ class AUFS(QMainWindow):
                         messagebox.showerror("Error", "Invalid drive letter. Please enter a valid drive letter (e.g., Z).")
                         sys.exit(1)
                 else:
-                    # Prompt for a directory for macOS/Linux or if 'spare' checkbox is checked on Windows
+                    # Prompt for a directory for macOS/Linux or if 'win_mount_point_not_letter' checkbox is checked on Windows
                     self.mount_point = filedialog.askdirectory(title="Select Mount Point")
                     if not self.mount_point:
                         messagebox.showerror("Error", "You must select a valid mount point.")

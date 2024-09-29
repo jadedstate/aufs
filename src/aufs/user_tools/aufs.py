@@ -4,8 +4,8 @@ import json
 import time
 import subprocess
 import shutil
-from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QListWidget, QDialog, QVBoxLayout, QLabel, QTextEdit, QPushButton,
-                               QCheckBox, QVBoxLayout, QWidget, QMessageBox)
+from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QListWidget, QDialog, QVBoxLayout, QLabel, QTextEdit, QPushButton, QInputDialog, QLineEdit,
+                               QFileDialog, QCheckBox, QVBoxLayout, QWidget, QMessageBox)
 from PySide6.QtCore import Qt
 from pathlib import Path
 import pyarrow.parquet as pq
@@ -188,22 +188,36 @@ class AUFS(QMainWindow):
     def prompt_for_mount_point(self):
         """
         Prompts the user for the root directory (mount point) to use.
-        - On Windows, it asks for a drive letter.
+        - On Windows, it asks for a drive letter or mount point depending on the "spare" checkbox.
         - On macOS/Linux, it asks for a directory.
         """
         system_platform = platform.system().lower()
 
         if system_platform == 'windows':
-            # Ask for a drive letter on Windows
-            mount_point, ok = QInputDialog.getText(self, "Drive Letter", "Enter a drive letter (e.g., Z):", QLineEdit.Normal, "Z")
-            if ok and mount_point:
-                return mount_point.upper()  # Normalize to uppercase drive letter
+            if self.checkbox_spare.isChecked():
+                # Prompt for a mount point instead of a drive letter when "spare" checkbox is checked
+                mount_point = QFileDialog.getExistingDirectory(self, "Select Mount Point")
+                if mount_point:
+                    return mount_point
+                else:
+                    QMessageBox.warning(self, "Warning", "You must select a valid mount point.")
+                    return None
+            else:
+                # Ask for a drive letter if the "spare" checkbox is not checked
+                mount_point, ok = QInputDialog.getText(self, "Drive Letter", "Enter a drive letter (e.g., Z):", QLineEdit.Normal, "Z")
+                if ok and mount_point:
+                    return mount_point.upper()  # Normalize to uppercase drive letter
+                else:
+                    QMessageBox.warning(self, "Warning", "You must provide a drive letter.")
+                    return None
         else:
             # Ask for a directory on macOS/Linux
             mount_point = QFileDialog.getExistingDirectory(self, "Select Mount Point")
             if mount_point:
                 return mount_point
-        return None
+            else:
+                QMessageBox.warning(self, "Warning", "You must select a valid mount point.")
+                return None
 
     def get_shell_command(self):
         """
@@ -377,6 +391,7 @@ class AUFS(QMainWindow):
     def generate_provisioner_script(self, parquet_file):
         """
         Generates a Python script with the provisioning logic for the selected Parquet file.
+        Adjusts for using mount points instead of drive letters on Windows if the 'spare' checkbox is checked.
         :param parquet_file: The path to the selected Parquet file.
         :return: The path to the generated Python script.
         """
@@ -452,9 +467,9 @@ class AUFS(QMainWindow):
                 self.username = simpledialog.askstring("Username", "Enter your username:")
                 self.password = simpledialog.askstring("Password", "Enter your password:", show='*')
 
-                # Platform-specific handling
-                if platform.system().lower() == 'windows':
-                    # **Prompt for drive letter on Windows**
+                # Platform-specific handling (Handle the 'spare' checkbox)
+                if platform.system().lower() == 'windows' and not {str(self.checkbox_spare.isChecked()).lower()}:
+                    # If 'spare' is NOT checked, prompt for drive letter on Windows
                     self.mount_point = simpledialog.askstring("Drive Letter", "Enter a drive letter (e.g., Z):", initialvalue="Z")
 
                     if not self.mount_point:
@@ -469,7 +484,7 @@ class AUFS(QMainWindow):
                         messagebox.showerror("Error", "Invalid drive letter. Please enter a valid drive letter (e.g., Z).")
                         sys.exit(1)
                 else:
-                    # **Prompt for mount point using a directory browser for macOS/Linux**
+                    # Prompt for mount point using a directory browser for macOS/Linux, or if 'spare' is checked for Windows
                     self.mount_point = filedialog.askdirectory(title="Select Mount Point")
 
                     if not self.mount_point:
@@ -477,14 +492,10 @@ class AUFS(QMainWindow):
                         sys.exit(1)  # Exit if no directory is selected
 
             def get_user_creds_ofs_docker_01(self):
-                
                 # This method is specifically used for OFS provisioning.
                 # It sets the mount point and ensures the directory is valid and empty.
-                
-                # Prompt for mount point (an empty directory) using a directory browser
                 self.mount_point = filedialog.askdirectory(title="Select an empty directory as the mount point")
 
-                # Ensure the mount point is empty and valid
                 if not self.mount_point or not os.path.exists(self.mount_point):
                     messagebox.showerror("Error", "Invalid directory. Please select an empty directory.")
                     sys.exit(1)
@@ -549,8 +560,8 @@ class AUFS(QMainWindow):
                         shell = "powershell.exe"  # Use PowerShell on Windows
                         flag = "-Command"
                     else:
-                        shell = "/bin/bash"  # Use bash on macOS/Linux
-                        flag = "-c"
+                        shell = '/bin/bash'  # Use bash on macOS/Linux
+                        flag = '-c'
 
                     # Execute the platform-specific script
                     try:
@@ -718,6 +729,9 @@ class AUFS(QMainWindow):
     def generate_provisioner_script_root(self, parquet_file):
         """
         Generates a Python script with one dialog asking for a drive letter (Windows) or a directory (macOS/Linux).
+        Adjusts for using mount points instead of drive letters on Windows if the 'spare' checkbox is checked.
+        :param parquet_file: The path to the selected Parquet file.
+        :return: The path to the generated Python script.
         """
         # Get the base name of the parquet file (without extension) and current UTC timestamp
         parquet_name = os.path.splitext(os.path.basename(parquet_file))[0]
@@ -761,16 +775,19 @@ class AUFS(QMainWindow):
                 root = tk.Tk()
                 root.withdraw()  # Hide the root window
 
-                if platform.system().lower() == 'windows':
+                # Handle mount point logic based on platform (with 'spare' checkbox handling)
+                if platform.system().lower() == 'windows' and not {str(self.checkbox_spare.isChecked()).lower()}:
+                    # If 'spare' is NOT checked, prompt for drive letter on Windows
                     self.mount_point = simpledialog.askstring("Drive Letter", "Enter a drive letter (e.g., Z):", initialvalue="Z")
                     if not self.mount_point:
                         messagebox.showerror("Error", "You must provide a drive letter.")
                         sys.exit(1)
                     self.mount_point = self.mount_point.strip().upper()
                     if len(self.mount_point) != 1 or not self.mount_point.isalpha():
-                        messagebox.showerror("Error", "Invalid drive letter. Please enter a valid drive letter.")
+                        messagebox.showerror("Error", "Invalid drive letter. Please enter a valid drive letter (e.g., Z).")
                         sys.exit(1)
                 else:
+                    # Prompt for a directory for macOS/Linux or if 'spare' checkbox is checked on Windows
                     self.mount_point = filedialog.askdirectory(title="Select Mount Point")
                     if not self.mount_point:
                         messagebox.showerror("Error", "You must select a valid mount point.")
@@ -799,9 +816,7 @@ class AUFS(QMainWindow):
 
                     # Replace placeholders in the script
                     script = script.replace("MNTPOINT", self.mount_point)
-                    print('Script: ')
-                    print(script)
-    
+        
                     if platform.system().lower() == 'windows':
                         shell = 'powershell.exe'
                         flag = '-Command'
@@ -1213,36 +1228,36 @@ exe = EXE(
     def create_darwin_run_file(self, folder_name, executable_name, parquet_file_name):
         """
         Creates an AppleScript file for macOS that runs the provisioner executable with the Parquet file
-        and compiles it into a double-clickable .app, showing a non-blocking progress window.
+        and compiles it into a double-clickable .app, with continuous feedback to the user.
         """
         applescript_content = f'''
         on run
-            -- Display a progress dialog with a "Click to proceed - a dialog asking for mount point will follow in a few moments" button that does nothing
-            display dialog "Provisioning AUFS data..." buttons {{"Click to proceed - a dialog asking for mount point will follow in a few moments"}} default button "Click to proceed - a dialog asking for mount point will follow in a few moments"
+            -- Ask the user to locate the folder where they double-clicked the app
+            set chosenFolder to choose folder with prompt "Please select the folder where you double-clicked this app."
 
-            -- Get the path to the app itself and convert it to a POSIX path
-            set appPath to (POSIX path of (path to me))
+            -- Get the POSIX path of the chosen folder
+            set chosenPath to POSIX path of chosenFolder
 
-            -- Get the directory of the .app
-            set appDir to do shell script "dirname " & quoted form of appPath
+            -- Show a progress dialog with a non-dismissable message while the process runs
+            display dialog "Provisioning AUFS data..." buttons {{"You may need to go to --Privacy & Security-- again after clicking this button"}} with icon note
 
             -- Construct the full paths to the executable and Parquet file
-            set execPath to appDir & "/{executable_name}"
-            set parquetPath to appDir & "/{parquet_file_name}"
+            set execPath to chosenPath & "/{executable_name}"
+            set parquetPath to chosenPath & "/{parquet_file_name}"
 
             -- Try to run the executable with the Parquet file
             try
                 do shell script quoted form of execPath & " " & quoted form of parquetPath
 
-                -- Once done, replace the progress dialog with a success message and an ok button
+                -- Replace the progress dialog with a success message
                 display dialog "Provisioning complete!" buttons {{"OK"}} default button "OK" with icon note
 
             on error errorMessage number errorNumber
-                -- Replace the progress dialog with an error message and an ok button
-                display dialog "An error occurred during provisioning: " & errorMessage buttons {{"OK"}} default button "OK" with icon caution
+                -- Replace the progress dialog with an error message
+                display dialog "An error occurred during provisioning." buttons {{"OK"}} default button "OK" with icon caution
             end try
         end run
-       '''
+        '''
 
         # Write the .applescript file inside the package folder
         applescript_path = os.path.join(folder_name, f"run_{executable_name}.applescript")

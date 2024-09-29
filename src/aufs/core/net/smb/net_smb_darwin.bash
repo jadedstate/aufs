@@ -1,9 +1,9 @@
 #!/bin/bash
 
-SMB_SERVER="18.175.206.107/ro_data"
+SMB_SERVER="DATALOC"
 MOUNT_POINT="MNTPOINT"
-USERNAME="rowan"
-PASSWORD="ayapp139ie4two"  # Replace with the escaped version of your password
+USERNAME="UNAME"
+PASSWORD="PSSWD"  # Replace with the escaped version of your password
 
 # Create mount point
 mkdir -p $MOUNT_POINT

@@ -9,7 +9,7 @@ function Create-SecureString {
     return $SecurePassword
 }
 
-$SMBServer = "DATALOC"
+$WebDavServer = "DATALOC"
 $MountPoint = "MNTPOINT"  # Drive letter or mount point selected dynamically
 $Username = "UNAME"
 $Password = "PSSWD"
@@ -20,18 +20,19 @@ $SecurePassword = Create-SecureString $Password
 # Create the credential object
 $Credential = New-Object System.Management.Automation.PSCredential ($Username, $SecurePassword)
 
-# Mount the network drive using the specified mount point (e.g., a drive letter)
+# Map the WebDAV share to the specified drive letter or mount point
 try {
-    New-PSDrive -Name $MountPoint -PSProvider FileSystem -Root $SMBServer -Credential $Credential -Persist -ErrorAction Stop
+    # Mounting WebDAV drive using net use
+    net use $MountPoint $WebDavServer /user:$Username $Password /persistent:yes
 
     # Check if the mount was successful
     if (Test-Path "$($MountPoint):\") {
-        Write-Host "SMB share successfully mounted at $MountPoint."
+        Write-Host "WebDAV share successfully mounted at $MountPoint."
     } else {
-        Write-Host "Failed to mount SMB share."
+        Write-Host "Failed to mount WebDAV share."
         exit 1
     }
 } catch {
-    Write-Host "Error: Failed to mount the SMB share: $_"
+    Write-Host "Error: Failed to mount the WebDAV share: $_"
     exit 1
 }

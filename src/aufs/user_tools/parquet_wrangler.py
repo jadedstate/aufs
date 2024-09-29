@@ -3,13 +3,16 @@ import os
 import subprocess
 import zipfile
 import shutil
+import random
+import string
+from pathlib import PureWindowsPath, PurePosixPath
 import pandas as pd
 from pathlib import Path
 import hashlib
 import json
 import tempfile
-from PySide6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, QPushButton, QLineEdit, QLabel, QCheckBox,
-                               QListWidget, QListWidgetItem, QDockWidget, QMessageBox)
+from PySide6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, QPushButton, QLineEdit, QLabel, QCheckBox, QComboBox,
+                               QDialog, QListWidget, QListWidgetItem, QDockWidget, QMessageBox)
 from PySide6.QtCore import Qt
 import pyarrow as pa
 
@@ -156,7 +159,6 @@ class WranglerApp(QMainWindow):
 
         data_widget = QWidget()
         data_layout = QVBoxLayout()
-
         # Protocol list in the data driver
         protocol_label = QLabel("Available Protocols:")
         self.protocol_list = QListWidget()
@@ -167,7 +169,54 @@ class WranglerApp(QMainWindow):
 
         data_layout.addWidget(protocol_label)
         data_layout.addWidget(self.protocol_list)
+        # Text input for specifying the data's location (e.g., smb_server/share)
+        data_location_label = QLabel("Data Location:")
+        self.data_location_input = QLineEdit()
+        data_layout.addWidget(data_location_label)
+        data_layout.addWidget(self.data_location_input)
 
+        # Dropdown list for selecting users
+        user_label = QLabel("Select User:")
+        self.user_dropdown = QComboBox()
+        self.load_user_data()  # Load the CSV into a DataFrame and populate the dropdown
+        data_layout.addWidget(user_label)
+        data_layout.addWidget(self.user_dropdown)
+
+        # Button for adding a user
+        add_user_button = QPushButton("Add User")
+        add_user_button.clicked.connect(self.add_user_dialog)  # Opens a dialog for user input
+        data_layout.addWidget(add_user_button)
+
+        # Checkboxes with associated input fields
+        self.username_password_checkbox = QCheckBox("Include Username & Password")
+        self.mount_point_checkbox = QCheckBox("Specify Mount Point")
+        self.encrypt_checkbox = QCheckBox("Encrypt Data")
+
+        data_layout.addWidget(self.username_password_checkbox)
+        data_layout.addWidget(self.mount_point_checkbox)
+        data_layout.addWidget(self.encrypt_checkbox)
+
+        # Mount Point Inputs (initially disabled)
+        self.mount_point_windows = QLineEdit("Z:")
+        self.mount_point_mac = QLineEdit("$HOME/Desktop/aufs")
+        self.mount_point_linux = QLineEdit("$HOME/Desktop/aufs")
+
+        data_layout.addWidget(QLabel("Windows Mount Point:"))
+        data_layout.addWidget(self.mount_point_windows)
+        data_layout.addWidget(QLabel("MacOS Mount Point:"))
+        data_layout.addWidget(self.mount_point_mac)
+        data_layout.addWidget(QLabel("Linux Mount Point:"))
+        data_layout.addWidget(self.mount_point_linux)
+
+        # Disable mount point inputs until the checkbox is selected
+        self.mount_point_windows.setEnabled(False)
+        self.mount_point_mac.setEnabled(False)
+        self.mount_point_linux.setEnabled(False)
+
+        # Checkbox toggles for mount points
+        self.mount_point_checkbox.toggled.connect(self.toggle_mount_points)
+
+        # Button to set data for the schema
         set_data_button = QPushButton("Set Data for schema")
         set_data_button.clicked.connect(self.set_data_for_schema)
         data_layout.addWidget(set_data_button)
@@ -176,21 +225,11 @@ class WranglerApp(QMainWindow):
         data_driver.setWidget(data_widget)
         self.addDockWidget(Qt.LeftDockWidgetArea, data_driver)
 
-    def populate_protocol_list(self):
-        """
-        Populates the protocol list in the Data Driver with non-empty directories from '/core/net'.
-        """
-        # Check if the directory exists
-        if os.path.exists(self.scripts_base_path):
-            # Iterate over the subdirectories in '/core/net'
-            for protocol_dir in os.listdir(self.scripts_base_path):
-                full_path = os.path.join(self.scripts_base_path, protocol_dir)
-
-                # Add to the list only if it's a non-empty directory
-                if os.path.isdir(full_path) and os.listdir(full_path):  # Check if it's a directory and not empty
-                    self.protocol_list.addItem(QListWidgetItem(protocol_dir))  # Add to the list
-        else:
-            print(f"Directory '{self.scripts_base_path}' not found.")
+    def toggle_mount_points(self, checked):
+        """Enable or disable mount point inputs based on the checkbox status."""
+        self.mount_point_windows.setEnabled(checked)
+        self.mount_point_mac.setEnabled(checked)
+        self.mount_point_linux.setEnabled(checked)
 
     def on_protocol_selected(self):
         """
@@ -199,9 +238,122 @@ class WranglerApp(QMainWindow):
         selected_item = self.protocol_list.currentItem()
         if selected_item:
             self.selected_protocol = selected_item.text()  # Store the selected protocol
+            self.load_user_data()
             print(f"Protocol selected: {self.selected_protocol}")
         else:
             QMessageBox.warning(self, "Warning", "Please select a protocol.")
+
+    def load_user_data(self):
+        """
+        Load user data from a CSV file and populate the dropdown list.
+        If the CSV file is empty or missing, populate the dropdown with a friendly message.
+        """
+        try:
+            # Define the path to the user CSV based on the selected protocol
+            protocol = self.selected_protocol if hasattr(self, 'selected_protocol') else "smb"  # Default to smb if not set
+            print('Protocol being used to load user data: ', protocol)
+            csv_location = os.path.expanduser(f"~/.aufs/provisioning/users/{protocol}/aufs_{protocol}_users.csv")
+
+            # Attempt to read CSV into a DataFrame
+            user_df = pd.read_csv(csv_location, header=None)
+
+            # Clear the dropdown in case of old data
+            self.user_dropdown.clear()
+
+            # Check if the CSV is empty, and handle it gracefully
+            if user_df.empty:
+                self.user_dropdown.addItem(f"No {protocol} Users")
+            else:
+                # Populate the dropdown with usernames from the first row
+                for user in user_df.iloc[0]:
+                    self.user_dropdown.addItem(user)
+
+        except FileNotFoundError:
+            # If the file is not found, treat it as having no users
+            self.user_dropdown.clear()
+            self.user_dropdown.addItem(f"No {protocol} Users")
+
+        except Exception as e:
+            # Handle other errors with a user-friendly message
+            print(f"Error loading CSV: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to load user data: {e}")
+
+    def populate_user_dropdown(self):
+        """
+        Populate the user dropdown list from the loaded DataFrame.
+        """
+        self.user_dropdown.clear()
+        
+        if not hasattr(self, 'user_data_df'):
+            return
+
+        # Assuming the first row of CSV contains usernames
+        users = self.user_data_df.columns
+        self.user_dropdown.addItems(users)
+
+    def add_user_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add User")
+
+        layout = QVBoxLayout()
+
+        name_label = QLabel("User Name:")
+        name_input = QLineEdit()
+        layout.addWidget(name_label)
+        layout.addWidget(name_input)
+
+        uname_label = QLabel("Username:")
+        uname_input = QLineEdit()
+        layout.addWidget(uname_label)
+        layout.addWidget(uname_input)
+
+        password_label = QLabel("Password:")
+        password_input = QLineEdit()
+        password_input.setEchoMode(QLineEdit.Password)
+        layout.addWidget(password_label)
+        layout.addWidget(password_input)
+
+        # Optionally generate a random password
+        generate_password_button = QPushButton("Generate Random Password")
+        generate_password_button.clicked.connect(lambda: self.generate_random_password(password_input))
+        layout.addWidget(generate_password_button)
+
+        # Add a save button
+        save_button = QPushButton("Save")
+        save_button.clicked.connect(lambda: self.save_new_user(name_input, uname_input, password_input, dialog))
+        layout.addWidget(save_button)
+
+        dialog.setLayout(layout)
+        dialog.exec()
+
+    def generate_random_password(self, password_input):
+        """Generate a random password and populate the input field."""
+        random_password = ''.join(random.choices(string.ascii_letters + string.digits + string.punctuation, k=12))
+        password_input.setText(random_password)
+
+    def save_new_user(self, name_input, uname_input, password_input, dialog):
+        """Append the new user to the CSV file and refresh the dropdown."""
+        try:
+            protocol = self.selected_protocol if hasattr(self, 'selected_protocol') else "smb"
+            csv_location = os.path.expanduser(f"~/.aufs/provisioning/users/{protocol}/aufs_{protocol}_users.csv")
+
+            new_user_data = {
+                name_input.text(): f"{uname_input.text()}:{password_input.text()}"
+            }
+
+            # Append to the CSV file
+            with open(csv_location, 'a') as csvfile:
+                csv_writer = csv.writer(csvfile)
+                csv_writer.writerow(new_user_data.values())
+
+            # Reload the user dropdown after saving
+            self.load_user_data()
+
+            dialog.accept()
+
+        except Exception as e:
+            print(f"Error saving user: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to save new user: {e}")
 
     def set_data_for_schema(self):
         """
@@ -227,6 +379,21 @@ class WranglerApp(QMainWindow):
                 QMessageBox.critical(self, "Error", f"No scripts found for {selected_protocol}")
                 return
 
+            # Handle replacement variables
+            uname = None
+            psswd = None
+
+            if self.username_password_checkbox.isChecked():
+                # Fetch the selected user's credentials
+                selected_user = self.user_dropdown.currentText()
+                user_index = self.user_dropdown.currentIndex()
+                
+                # Assuming user_df holds usernames and passwords as columns
+                user_credentials = pd.read_csv(os.path.expanduser(f"~/.aufs/provisioning/users/{selected_protocol}/aufs_{selected_protocol}_users.csv"), header=None)
+                
+                uname, psswd = user_credentials.iloc[1, user_index].split(':')  # Assuming the second row holds credentials in 'username:password' format
+
+            # Prepare platform-specific script data
             platform_dictionary = get_platform_dictionary()
             platform_order = [key.split('_')[0] for key, value in sorted(platform_dictionary.items(), key=lambda item: item[1])]
 
@@ -235,6 +402,17 @@ class WranglerApp(QMainWindow):
                 script_content = smb_scripts.get(platform)
                 if script_content:
                     print(f"Embedding script for {platform}: {script_content[:100]}...")
+
+                    # Use the data location handler for the selected protocol
+                    dataloc_linux_mac, dataloc_win = self.dataloc_handler(selected_protocol)
+
+                    # Replace placeholders with actual values
+                    script_content = script_content.replace("DATALOC", dataloc_win if platform == "win" else dataloc_linux_mac)
+                    
+                    if uname and psswd:
+                        script_content = script_content.replace("UNAME", uname)
+                        script_content = script_content.replace("PSSWD", psswd)
+
                     script_data.append(script_content)
                 else:
                     print(f"No script found for platform {platform}")
@@ -275,6 +453,79 @@ class WranglerApp(QMainWindow):
         except Exception as e:
             print(f"Error while embedding data: {str(e)}")
             QMessageBox.critical(self, "Error", f"Failed to embed script data for {selected_protocol}: {str(e)}")
+
+    def dataloc_handler(self, protocol):
+        """
+        Dispatch to the appropriate protocol-specific data location handler.
+        """
+        handler_method = getattr(self, f'dataloc_handler_{protocol}', None)
+        if handler_method:
+            return handler_method()
+        else:
+            raise ValueError(f"No data location handler found for protocol: {protocol}")
+
+    def dataloc_handler_smb(self):
+        """
+        Handle SMB data location parsing and formatting.
+        - Split the input by both "\" and "/" in two steps.
+        - Rebuild for Linux/Mac using "/" and for Windows manually with "\\".
+        - Ensure Windows paths start with "\\" for network paths.
+        """
+        smb_server_share = self.data_location_input.text().strip()
+
+        # Step 1: Remove "smb:" prefix if present
+        if ":" in smb_server_share:
+            smb_server_share = smb_server_share.split(":", 1)[1].strip()
+
+        # Step 2: Split the path by backslashes and forward slashes
+        path_elements = smb_server_share.split("\\")  # Split by backslashes first
+        path_elements = [sub_element for element in path_elements for sub_element in element.split("/")]  # Then split by forward slashes
+
+        # Remove any empty elements caused by leading slashes
+        path_elements = [element for element in path_elements if element]
+
+        # Step 3: Rebuild for Linux/Mac using "/"
+        smb_linux_mac = "/".join(path_elements)
+
+        # Step 4: Manually build the Windows path using backslashes
+        smb_win = "\\".join(path_elements)
+
+        # Ensure the Windows path starts with "\\" for network paths
+        smb_win = f"\\\\{smb_win}"
+
+        # Debugging: print the formatted paths
+        print(f"Formatted SMB paths: Linux/Mac: {smb_linux_mac}, Windows: {smb_win}")
+
+        return smb_linux_mac, smb_win
+
+    def dataloc_handler_nfs(self):
+        """
+        Handle NFS data location parsing and formatting.
+        - Normalize input for NFS server:/share.
+        """
+        nfs_server_share = self.data_location_input.text().strip()
+
+        # Normalize the NFS format (server:/share)
+        if ":" not in nfs_server_share:
+            nfs_server_share = nfs_server_share.replace("/", ":/")  # Ensure server:/share format
+
+        return nfs_server_share
+
+    def populate_protocol_list(self):
+        """
+        Populates the protocol list in the Data Driver with non-empty directories from '/core/net'.
+        """
+        # Check if the directory exists
+        if os.path.exists(self.scripts_base_path):
+            # Iterate over the subdirectories in '/core/net'
+            for protocol_dir in os.listdir(self.scripts_base_path):
+                full_path = os.path.join(self.scripts_base_path, protocol_dir)
+
+                # Add to the list only if it's a non-empty directory
+                if os.path.isdir(full_path) and os.listdir(full_path):  # Check if it's a directory and not empty
+                    self.protocol_list.addItem(QListWidgetItem(protocol_dir))  # Add to the list
+        else:
+            print(f"Directory '{self.scripts_base_path}' not found.")
 
     def add_metadata_driver(self):
         """Add metadata driver"""

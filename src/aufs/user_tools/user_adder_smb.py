@@ -1,13 +1,14 @@
 import sys
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox
+    QApplication, QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox, QCheckBox
 )
 from pathlib import Path
 import pandas as pd
-from PySide6.QtCore import Slot
+from PySide6.QtCore import Slot, Qt
 import paramiko
 import csv
-import os
+import random
+import string
 
 class SMBUserAdder(QWidget):
     def __init__(self):
@@ -20,7 +21,7 @@ class SMBUserAdder(QWidget):
         # PEM file input
         self.pem_file_label = QLabel("Select PEM/Credentials File:")
         self.pem_file_input = QLineEdit(self)
-        self.pem_file_input.setText("/Users/uel/Dasein/daseinVfx/aws-keys/euw2-workstations.pem")
+        self.pem_file_input.setText("G:/scratch/uel/aws_temp/euw2-workstations.pem")
         self.pem_file_browse = QPushButton("Browse", self)
         self.pem_file_browse.clicked.connect(self.browse_pem_file)
 
@@ -61,15 +62,25 @@ class SMBUserAdder(QWidget):
         self.username_input = QLineEdit(self)
         self.username_input.setText("uel")
 
+        # Password Input and Generation
         self.password_label = QLabel("Password:")
         self.password_input = QLineEdit(self)
+        self.password_generate = QPushButton("Generate Password", self)
+        self.password_generate.clicked.connect(self.generate_random_password)
 
+        # Safe mode checkbox
+        self.safe_mode_checkbox = QCheckBox("Safe Mode (alphanumeric only)", self)
+        self.safe_mode_checkbox.setChecked(True)
+        
         layout.addWidget(self.name_label)
         layout.addWidget(self.name_input)
         layout.addWidget(self.username_label)
         layout.addWidget(self.username_input)
+
         layout.addWidget(self.password_label)
         layout.addWidget(self.password_input)
+        layout.addWidget(self.password_generate)
+        layout.addWidget(self.safe_mode_checkbox)
 
         # CSV file input
         self.csv_file_label = QLabel("Select CSV File:")
@@ -92,6 +103,22 @@ class SMBUserAdder(QWidget):
 
         self.setLayout(layout)
         self.setWindowTitle("SMB User Adder")
+
+    def generate_random_password(self):
+        """Generate a strong random password, optionally in safe mode."""
+        password_length = 12
+
+        # Check if safe mode is enabled
+        if self.safe_mode_checkbox.isChecked():
+            characters = string.ascii_letters + string.digits
+        else:
+            # Full set of characters minus blacklisted ones
+            blacklist = ":;?~|<>"
+            characters = ''.join(c for c in (string.ascii_letters + string.digits + string.punctuation) if c not in blacklist)
+
+        # Generate the random password
+        random_password = ''.join(random.choice(characters) for _ in range(password_length))
+        self.password_input.setText(random_password)
 
     @Slot()
     def browse_pem_file(self):
@@ -251,19 +278,37 @@ valid users = {username}
 
     def append_to_csv(self, username, password, name):
         try:
-            # File path
+            # Define the file and directory paths
             csv_file_path = Path.home() / ".aufs/provisioning/users/smb/aufs_smb_users.csv"
+            csv_dir = csv_file_path.parent
 
-            # Load the existing CSV into a DataFrame
-            df = pd.read_csv(csv_file_path)
+            # Ensure the directory exists (create if not)
+            if not csv_dir.exists():
+                print(f"Directory {csv_dir} does not exist, creating it.")
+                csv_dir.mkdir(parents=True, exist_ok=True)
+                print(f"Directory {csv_dir} created.")
 
-            # Create a new column with "User's Name" as the header and "username:password" as the value
-            new_user_column = pd.Series([f"{username}:{password}"], index=df.index)
-            df[name] = new_user_column
+            # Check if the CSV file exists
+            if not csv_file_path.exists():
+                print(f"CSV file {csv_file_path} does not exist, creating it.")
 
-            # Write the updated DataFrame back to the CSV file
-            df.to_csv(csv_file_path, index=False)
-            print(f"User {username} added to {csv_file_path}")
+                # Create a new DataFrame with the user's data
+                df = pd.DataFrame({name: [f"{username}:{password}"]})
+                df.to_csv(csv_file_path, index=False)
+
+                print(f"New CSV file created and user {username} added to {csv_file_path}")
+                QMessageBox.information(self, "CSV Created", f"CSV file {csv_file_path} created successfully.")
+            else:
+                # Load the existing CSV into a DataFrame
+                df = pd.read_csv(csv_file_path)
+
+                # Create a new column with "User's Name" as the header and "username:password" as the value
+                new_user_column = pd.Series([f"{username}:{password}"], index=df.index)
+                df[name] = new_user_column
+
+                # Write the updated DataFrame back to the CSV file
+                df.to_csv(csv_file_path, index=False)
+                print(f"User {username} added to {csv_file_path}")
 
         except Exception as e:
             print(f"Error appending user to CSV: {str(e)}")

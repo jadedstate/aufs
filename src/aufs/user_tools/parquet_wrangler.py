@@ -311,7 +311,6 @@ class WranglerApp(QMainWindow):
 
         password_label = QLabel("Password:")
         password_input = QLineEdit()
-        password_input.setEchoMode(QLineEdit.Password)
         layout.addWidget(password_label)
         layout.addWidget(password_input)
 

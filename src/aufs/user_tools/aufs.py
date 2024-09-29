@@ -103,8 +103,7 @@ class AUFS(QMainWindow):
     def generate_provisioner_script(self, parquet_file):
         """
         Generates a Python script with the provisioning logic for the selected Parquet file.
-        :param parquet_file: The path to the selected Parquet file.
-        :return: The path to the generated Python script.
+        Based on the state of the 'spare' checkbox, it either prompts for a drive letter or a directory.
         """
         # Get the base name of the parquet file (without extension) and current UTC timestamp
         parquet_name = os.path.splitext(os.path.basename(parquet_file))[0]
@@ -118,7 +117,43 @@ class AUFS(QMainWindow):
         # Path for the new Python script
         script_path = os.path.join(target_dir, script_name)
 
-        # Define the provisioning logic script, replacing {parquet_file} with the actual path
+        # Dynamically select the appropriate get_mount_point method based on 'spare' checkbox state
+        if self.checkbox_win_mount_point_not_drive_letter.isChecked():
+            # If 'spare' is checked, always prompt for a directory
+            get_mount_point_method = """
+            def get_mount_point(self):
+                root = tk.Tk()
+                root.withdraw()  # Hide the root window
+
+                self.mount_point = filedialog.askdirectory(title="Select Mount Point")
+                if not self.mount_point:
+                    messagebox.showerror("Error", "You must select a valid mount point.")
+                    sys.exit(1)
+            """
+        else:
+            # Default: prompt for drive letter on Windows, directory on macOS/Linux
+            get_mount_point_method = """
+            def get_mount_point(self):
+                root = tk.Tk()
+                root.withdraw()  # Hide the root window
+
+                if platform.system().lower() == 'windows':
+                    self.mount_point = simpledialog.askstring("Drive Letter", "Enter a drive letter (e.g., Z):", initialvalue="Z")
+                    if not self.mount_point:
+                        messagebox.showerror("Error", "You must provide a drive letter.")
+                        sys.exit(1)
+                    self.mount_point = self.mount_point.strip().upper()
+                    if len(self.mount_point) != 1 or not self.mount_point.isalpha():
+                        messagebox.showerror("Error", "Invalid drive letter. Please enter a valid drive letter.")
+                        sys.exit(1)
+                else:
+                    self.mount_point = filedialog.askdirectory(title="Select Mount Point")
+                    if not self.mount_point:
+                        messagebox.showerror("Error", "You must select a valid mount point.")
+                        sys.exit(1)
+            """
+
+        # Define the rest of the provisioning logic script
         provisioner_script = f"""
         import sys
         import os
@@ -127,7 +162,7 @@ class AUFS(QMainWindow):
         import platform
         import pyarrow.parquet as pq
         import tkinter as tk
-        from tkinter import messagebox, simpledialog, filedialog
+        from tkinter import simpledialog, filedialog, messagebox
 
         class ParquetProvisioner:
             def __init__(self, parquet_path):
@@ -135,20 +170,13 @@ class AUFS(QMainWindow):
                 self.username = None
                 self.password = None
                 self.mount_point = None
-                self.is_ofs = False  # Added to track if this is an OFS provisioner
 
             def run(self):
                 parquet_table = pq.read_table(self.parquet_path)
                 metadata = parquet_table.schema.metadata
 
                 if metadata:
-                    # Detect if this is an OFS provisioner
-                    self.is_ofs = self.detect_ofs_provisioner(metadata)
-
-                    if self.is_ofs:
-                        self.get_user_creds_ofs_docker_01()  # Use the specific OFS method
-                    else:
-                        self.get_user_credentials()  # Get username, password, and mount point
+                    self.get_user_credentials()
 
                     dir_tree_preview = self.get_directory_tree_preview(metadata)
                     proceed = self.show_preview_and_confirm(dir_tree_preview)
@@ -157,17 +185,6 @@ class AUFS(QMainWindow):
                         self.provision_schema(metadata)
                         platform_key = self.get_platform_key()
                         self.execute_platform_script(metadata, platform_key)
-
-            def detect_ofs_provisioner(self, metadata):
-                # Detect if this is an OFS provisioner by examining the metadata
-                try:
-                    first_chunk = pq.read_table(self.parquet_path).to_pandas().iloc[0, 0].lower()
-                    if 'objectivefs' in first_chunk:
-                        return True
-                    return False
-                except Exception as e:
-                    print(f"Error detecting OFS provisioner: {{e}}")
-                    return False
 
             def get_user_credentials(self):
                 # Initialize Tkinter root window
@@ -178,29 +195,8 @@ class AUFS(QMainWindow):
                 self.username = simpledialog.askstring("Username", "Enter your username:")
                 self.password = simpledialog.askstring("Password", "Enter your password:", show='*')
 
-                # Platform-specific handling
-                if platform.system().lower() == 'windows':
-                    # **Prompt for drive letter on Windows**
-                    self.mount_point = simpledialog.askstring("Drive Letter", "Enter a drive letter (e.g., Z):", initialvalue="Z")
-
-                    if not self.mount_point:
-                        messagebox.showerror("Error", "You must provide a drive letter.")
-                        sys.exit(1)  # Exit if no drive letter is provided
-
-                    # Normalize the input to uppercase and ensure it's valid
-                    self.mount_point = self.mount_point.strip().upper()
-
-                    # Validate that the input is a single alphabetic character (e.g., "Z")
-                    if len(self.mount_point) != 1 or not self.mount_point.isalpha():
-                        messagebox.showerror("Error", "Invalid drive letter. Please enter a valid drive letter (e.g., Z).")
-                        sys.exit(1)
-                else:
-                    # **Prompt for mount point using a directory browser for macOS/Linux**
-                    self.mount_point = filedialog.askdirectory(title="Select Mount Point")
-
-                    if not self.mount_point:
-                        messagebox.showerror("Error", "You must select a valid mount point.")
-                        sys.exit(1)  # Exit if no directory is selected
+                # Mount point selection (dynamically selected)
+                {get_mount_point_method}
 
             def get_user_creds_ofs_docker_01(self):
                 
@@ -735,6 +731,7 @@ class AUFS(QMainWindow):
         """
         selected_item = self.schema_list.currentItem()
         if selected_item:
+            parquet_file = os.path.join(self.parquet_dir, selected_item.text())  # Path to embedded Parquet file
             parquet_file = os.path.join(self.parquet_dir, selected_item.text())  # Path to embedded Parquet file
 
             try:

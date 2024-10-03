@@ -1,4 +1,5 @@
 import sys
+import platform
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox, QCheckBox
 )
@@ -16,12 +17,26 @@ class SMBUserAdder(QWidget):
         self.init_ui()
     
     def init_ui(self):
+
         layout = QVBoxLayout()
 
         # PEM file input
         self.pem_file_label = QLabel("Select PEM/Credentials File:")
         self.pem_file_input = QLineEdit(self)
-        self.pem_file_input.setText("G:/scratch/uel/aws_temp/euw2-workstations.pem")
+
+        # Set default PEM path based on the operating system
+        current_os = platform.system()
+        if current_os == "Darwin":  # macOS
+            default_pem_path = "/Users/uel/Dasein/daseinVfx/aws-keys/euw2-workstations.pem"
+        elif current_os == "Windows":  # Windows
+            default_pem_path = "G:/scratch/uel/aws_temp/euw2-workstations.pem"
+        elif current_os == "Linux":  # Linux
+            default_pem_path = "Find your pem"
+        else:
+            default_pem_path = ""  # Fallback for unknown systems
+
+        self.pem_file_input.setText(default_pem_path)
+
         self.pem_file_browse = QPushButton("Browse", self)
         self.pem_file_browse.clicked.connect(self.browse_pem_file)
 
@@ -103,6 +118,7 @@ class SMBUserAdder(QWidget):
 
         self.setLayout(layout)
         self.setWindowTitle("SMB User Adder")
+        self.setGeometry(300, 300, 600, 800)
 
     def generate_random_password(self):
         """Generate a strong random password, optionally in safe mode."""

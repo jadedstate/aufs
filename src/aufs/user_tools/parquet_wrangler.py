@@ -25,6 +25,7 @@ sys.path.insert(0, src_path)
 from src.aufs.core.rendering.render_processor import InputManager
 from src.aufs.utils import validate_schema
 from src.aufs.core.rendering.the_third_embedder import TheThirdEmbedder
+from user_adder_smb import SMBUserAdder
 
 
 def get_platform_dictionary():
@@ -294,84 +295,9 @@ class WranglerApp(QMainWindow):
         self.user_dropdown.addItems(users)
 
     def add_user_dialog(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Add User")
-
-        layout = QVBoxLayout()
-
-        name_label = QLabel("User Name:")
-        name_input = QLineEdit()
-        layout.addWidget(name_label)
-        layout.addWidget(name_input)
-
-        uname_label = QLabel("Username:")
-        uname_input = QLineEdit()
-        layout.addWidget(uname_label)
-        layout.addWidget(uname_input)
-
-        password_label = QLabel("Password:")
-        password_input = QLineEdit()
-        layout.addWidget(password_label)
-        layout.addWidget(password_input)
-
-        # Optionally generate a random password
-        generate_password_button = QPushButton("Generate Random Password")
-        generate_password_button.clicked.connect(lambda: self.generate_random_password(password_input))
-        layout.addWidget(generate_password_button)
-
-        # Add a save button
-        save_button = QPushButton("Save")
-        save_button.clicked.connect(lambda: self.save_new_user(name_input, uname_input, password_input, dialog))
-        layout.addWidget(save_button)
-
-        dialog.setLayout(layout)
-        dialog.exec()
-
-    def generate_random_password(self, password_input):
-        """Generate a random password and populate the input field."""
-        random_password = ''.join(random.choices(string.ascii_letters + string.digits + string.punctuation, k=12))
-        password_input.setText(random_password)
-
-    def save_new_user(self, name_input, uname_input, password_input, dialog):
-        """Append the new user to the CSV file and refresh the dropdown."""
-        try:
-            protocol = self.selected_protocol if hasattr(self, 'selected_protocol') else "smb"
-            csv_location = os.path.expanduser(f"~/.aufs/provisioning/users/{protocol}/aufs_{protocol}_users.csv")
-
-            new_user_data = {
-                name_input.text(): f"{uname_input.text()}:{password_input.text()}"
-            }
-
-            # Check if the CSV file exists
-            if not os.path.exists(csv_location):
-                # Prompt the user if they'd like to create a new CSV file
-                reply = QMessageBox.question(
-                    self, 
-                    "Create CSV File", 
-                    f"The CSV file for {protocol} does not exist. Would you like to create a new one?", 
-                    QMessageBox.Yes | QMessageBox.No, 
-                    QMessageBox.No
-                )
-
-                if reply == QMessageBox.No:
-                    return  # Exit if the user doesn't want to create the file
-
-            # Create directories if they don't exist
-            os.makedirs(os.path.dirname(csv_location), exist_ok=True)
-
-            # Append to the CSV file (or create if it doesn't exist)
-            with open(csv_location, 'a', newline='') as csvfile:
-                csv_writer = csv.writer(csvfile)
-                csv_writer.writerow(new_user_data.values())
-
-            # Reload the user dropdown after saving
-            self.load_user_data()
-
-            dialog.accept()
-
-        except Exception as e:
-            print(f"Error saving user: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to save new user: {e}")
+        """ Opens the SMBUserAdder widget when the 'Add User' button is pressed. """
+        self.smb_user_adder_window = SMBUserAdder()  # Create an instance of SMBUserAdder
+        self.smb_user_adder_window.show()  # Show the SMBUserAdder window
 
     def set_data_for_schema(self):
         """

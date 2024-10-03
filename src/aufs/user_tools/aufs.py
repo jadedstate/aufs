@@ -969,8 +969,8 @@ exe = EXE(
             display dialog "Provisioning AUFS data..." buttons {{"You may need to go to --Privacy & Security again after clicking this button"}} with icon note
 
             -- Construct the full paths to the executable and Parquet file
-            set execPath to chosenPath & "/{{executable_name}}"
-            set parquetPath to chosenPath & "/{{parquet_file_name}}"
+            set execPath to chosenPath & "/{executable_name}"
+            set parquetPath to chosenPath & "/{parquet_file_name}"
 
             -- Try to run the executable with the Parquet file
             try

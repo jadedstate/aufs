@@ -55,7 +55,7 @@ class SMBUserAdder(QWidget):
         # Server IP input
         self.server_ip_label = QLabel("Server IP Address:")
         self.server_ip_input = QLineEdit(self)
-        self.server_ip_input.setText("18.175.206.107")
+        self.server_ip_input.setText("18.134.142.64")
 
         layout.addWidget(self.server_ip_label)
         layout.addWidget(self.server_ip_input)

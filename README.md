@@ -1,11 +1,14 @@
 # aufs
-AUFS is a metadata fabric layer file system
+AUFS is a metadata fabric file system layer
 
 Provisioning.
+
 Apache Parquet.
 Immutable.
 Schema.
+Data.
 Metadata.
+
 Provisioning.
 
 owner...a data's owner provisions.

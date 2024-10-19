@@ -55,7 +55,7 @@ class OSFSToSchemaApp(QMainWindow):
         (includes OS window controls and File->Quit).
         """
         self.cleanup_and_exit()
-        
+
     def cleanup_and_exit(self):
         """
         Add cleanup logic here.

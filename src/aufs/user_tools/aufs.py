@@ -574,6 +574,7 @@ class AUFS(QMainWindow):
                         print(f"Script execution failed: {{e}}")
                         print(f"Stdout: {{e.stdout}}")
                         print(f"Stderr: {{e.stderr}}")
+                        
             def get_platform_key(self):
                 # Identify the current operating system and return the appropriate script key
                 system_platform = platform.system().lower()

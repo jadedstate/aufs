@@ -5,7 +5,6 @@ from PySide6.QtWidgets import (
     QFileDialog, QDialog, QVBoxLayout, QTableView, QPushButton, QLineEdit, QMessageBox
 )
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex
-import difflib
 
 class EditablePandasModel(QAbstractTableModel):
     def __init__(self, dataframe: pd.DataFrame, schema: pa.Schema, parent=None):
@@ -56,17 +55,12 @@ class EditablePandasModel(QAbstractTableModel):
         return None
 
 class SourceDestinationLinkingDialog(QDialog):
-    def __init__(self, package_full_df, template_schema, parent=None):
+    def __init__(self, package_full_df=None, template_schema=None, parent=None):
         super().__init__(parent)
         self.package_full_df = package_full_df
         self.template_schema = template_schema
-
-        # Ensure the DEST column is of type 'object' (string)
-        if 'DEST' not in self.package_full_df.columns:
-            self.package_full_df['DEST'] = None
-        else:
-            self.package_full_df['DEST'] = self.package_full_df['DEST'].astype(object)
-
+        self.current_file_path = None  # Track the current file path
+        
         self.setWindowTitle("Source-Destination Linking")
         self.setGeometry(100, 100, 1200, 600)
 
@@ -82,8 +76,6 @@ class SourceDestinationLinkingDialog(QDialog):
         self.table_view = QTableView(self)
         self.table_view.horizontalHeader().setStretchLastSection(True)
         self.table_view.setSelectionBehavior(QTableView.SelectRows)
-        self.model = EditablePandasModel(self.package_full_df, None, self)
-        self.table_view.setModel(self.model)
         layout.addWidget(self.table_view)
 
         # Auto-assign DEST button
@@ -91,7 +83,12 @@ class SourceDestinationLinkingDialog(QDialog):
         self.auto_assign_button.clicked.connect(self.auto_assign_dest)
         layout.addWidget(self.auto_assign_button)
 
-        # Edit Selected Rows button (for manual intervention)
+        # Preview DEST button
+        self.preview_button = QPushButton("Preview DEST", self)
+        self.preview_button.clicked.connect(self.preview_dest)
+        layout.addWidget(self.preview_button)
+
+        # Edit Selected Rows button
         self.edit_selected_button = QPushButton("Edit Selected Rows", self)
         self.edit_selected_button.clicked.connect(self.edit_selected_rows)
         layout.addWidget(self.edit_selected_button)
@@ -110,8 +107,42 @@ class SourceDestinationLinkingDialog(QDialog):
         close_button.clicked.connect(self.close_application)
         layout.addWidget(close_button)
 
+        # Setup process after initializing
+        self.setup_dataframe()
+        
         # Initial setup for filtering
         self.filter_input.textChanged.connect(self.apply_filter)
+
+    def setup_dataframe(self):
+        """
+        Ensures required columns exist, and sets the column order.
+        Called after loading or initializing the DataFrame.
+        """
+        self.ensure_required_columns()
+        self.set_column_order()
+        self.update_table_model()
+
+    def ensure_required_columns(self):
+        """
+        Ensure that required columns (DEST, DESTPREVIEW, DESTOPTIONS) exist in the DataFrame.
+        """
+        required_columns = ['DEST', 'DESTPREVIEW', 'DESTOPTIONS']
+        for col in required_columns:
+            if col not in self.package_full_df.columns:
+                self.package_full_df[col] = None  # Initialize missing columns with None
+
+    def set_column_order(self):
+        """Rearrange the columns in the desired order."""
+        desired_columns = ['SRC', 'DEST', 'DESTPREVIEW', 'DESTOPTIONS']
+        other_columns = [col for col in self.package_full_df.columns if col not in desired_columns]
+        new_order = desired_columns + other_columns
+        self.package_full_df = self.package_full_df[new_order]  # Reorder DataFrame
+
+    def update_table_model(self):
+        """Update the table model and refresh the view."""
+        self.model = EditablePandasModel(self.package_full_df, None, self)
+        self.table_view.setModel(self.model)
+        self.model.layoutChanged.emit()  # Refresh the table view
 
     def apply_filter(self, filter_text):
         """Applies a filter based on the input text."""
@@ -151,8 +182,28 @@ class SourceDestinationLinkingDialog(QDialog):
     def auto_assign_dest(self):
         """
         Automatically assign DEST and populate DESTOPTIONS column based on file extensions and matching schema leaves.
+        This method now works on selected rows only and will prompt the user if any DEST fields are already filled.
         """
-        for idx, row in self.package_full_df.iterrows():
+        # Get the selected rows
+        selected_indexes = self.table_view.selectionModel().selectedRows()
+        if not selected_indexes:
+            QMessageBox.information(self, "No Selection", "Please select rows to auto-assign.")
+            return  # No rows selected
+
+        # Check if any selected rows already have a value in DEST
+        existing_dest_rows = [self.package_full_df.iloc[index.row()]['DEST'] for index in selected_indexes if pd.notna(self.package_full_df.iloc[index.row()]['DEST'])]
+        
+        if existing_dest_rows:
+            # Prompt the user if any selected rows have non-empty DEST
+            reply = QMessageBox.question(self, "Overwrite Existing DEST Values",
+                                        "Some selected rows already have values in the DEST column. Overwriting will remove those values. Do you want to proceed?",
+                                        QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply == QMessageBox.No:
+                return  # User chose not to overwrite
+
+        # Proceed with auto-assigning DEST for selected rows
+        for index in selected_indexes:
+            row = self.package_full_df.iloc[index.row()]
             src_file = row['SRC']
 
             # Handling image sequences (e.g., file.%04d.jpg)
@@ -173,43 +224,88 @@ class SourceDestinationLinkingDialog(QDialog):
 
             # Update DESTOPTIONS with only relevant matching destinations
             if possible_dests:
-                self.package_full_df.at[idx, 'DESTOPTIONS'] = ', '.join(possible_dests)
+                self.package_full_df.at[index.row(), 'DESTOPTIONS'] = ', '.join(possible_dests)
             else:
-                self.package_full_df.at[idx, 'DESTOPTIONS'] = None  # Clear if no match
+                self.package_full_df.at[index.row(), 'DESTOPTIONS'] = None  # Clear if no match
 
             # Auto-assign the first match if only one match exists
             if len(possible_dests) == 1:
-                self.package_full_df.at[idx, 'DEST'] = possible_dests[0]
+                self.package_full_df.at[index.row(), 'DEST'] = possible_dests[0]
 
         # Update the table view to reflect changes
         self.model.layoutChanged.emit()
 
-    def save_dataframe(self):
-        """Save the package_full_df to a CSV file."""
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save File", "", "CSV Files (*.csv)")
-        if file_path:
+    def preview_dest(self):
+        """
+        Update DESTPREVIEW for each row based on the current DEST value.
+        If the preview cannot be generated, skip that row and continue.
+        """
+        for idx, row in self.package_full_df.iterrows():
             try:
-                self.package_full_df.to_csv(file_path, index=False)
-                QMessageBox.information(self, "Save Successful", "Data saved successfully.")
+                # Example logic: Just copy the value of DEST to DESTPREVIEW
+                dest_value = row['DEST']
+                if dest_value and isinstance(dest_value, str):
+                    # Perform any transformation or preview logic here
+                    self.package_full_df.at[idx, 'DESTPREVIEW'] = dest_value  # Replace this with your real logic
+                else:
+                    # If no DEST or invalid data, leave DESTPREVIEW as None
+                    self.package_full_df.at[idx, 'DESTPREVIEW'] = None
+            except Exception as e:
+                # Log the error or handle it silently and move to the next row
+                print(f"Error processing row {idx}: {e}")
+                continue  # Skip to the next row if an error occurs
+
+        # Update the table view to reflect changes
+        self.model.layoutChanged.emit()
+
+    def update_window_title(self):
+        """Update the window title to include the loaded file path if available."""
+        if self.current_file_path:
+            file_name = self.current_file_path
+            self.setWindowTitle(f"Source-Destination Linking - {file_name}")
+        else:
+            self.setWindowTitle("Source-Destination Linking")
+
+    def save_dataframe(self):
+        """Save the package_full_df to the currently loaded CSV file if available."""
+        if self.current_file_path:
+            # Save to the currently loaded file
+            try:
+                self.package_full_df.to_csv(self.current_file_path, index=False)
+                QMessageBox.information(self, "Save Successful", f"Data saved to {self.current_file_path} successfully.")
+                self.update_window_title()  # Update the title after saving
             except Exception as e:
                 QMessageBox.warning(self, "Save Failed", f"An error occurred while saving: {e}")
+        else:
+            # Prompt for a file path if no file has been loaded
+            file_path, _ = QFileDialog.getSaveFileName(self, "Save File", "", "CSV Files (*.csv)")
+            if file_path:
+                try:
+                    self.package_full_df.to_csv(file_path, index=False)
+                    self.current_file_path = file_path  # Set this as the current file path
+                    self.update_window_title()  # Update the title after saving
+                    QMessageBox.information(self, "Save Successful", "Data saved successfully.")
+                except Exception as e:
+                    QMessageBox.warning(self, "Save Failed", f"An error occurred while saving: {e}")
 
     def load_dataframe(self):
-        """Load a CSV file into package_full_df."""
+        """Load a CSV file into package_full_df and set the current file path."""
         file_path, _ = QFileDialog.getOpenFileName(self, "Open File", "", "CSV Files (*.csv)")
         if file_path:
             try:
                 loaded_df = pd.read_csv(file_path)
-                
+
                 # Replace the entire dataframe with the newly loaded data
                 self.package_full_df = loaded_df
-                
-                # Create a new model to reflect the changes
-                self.model = EditablePandasModel(self.package_full_df, None, self)
-                self.table_view.setModel(self.model)
 
-                # Refresh the table view
-                self.model.layoutChanged.emit()
+                # Setup the dataframe to ensure columns and order
+                self.setup_dataframe()
+
+                # Set the loaded file path for future saves
+                self.current_file_path = file_path
+
+                self.update_window_title()  # Update the title after loading
+
                 QMessageBox.information(self, "Load Successful", "Data loaded successfully.")
             except Exception as e:
                 QMessageBox.warning(self, "Load Failed", f"An error occurred while loading: {e}")
@@ -247,6 +343,7 @@ class SourceDestinationLinkingDialog(QDialog):
     def close_application(self):
         """Closes the app and ensures that the application fully quits."""
         self.close()
+
 class SourceDestinationLinkingDialogForSelection(QDialog):
     def __init__(self, selected_row, dest_options_list, parent=None):
         """

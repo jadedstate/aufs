@@ -1,105 +1,78 @@
+from PySide6.QtWidgets import QMainWindow, QApplication, QVBoxLayout, QHBoxLayout, QPushButton, QWidget, QFileDialog
 import sys
 import os
-import json
-import subprocess
-import platform
-import pyarrow.parquet as pq
-import tkinter as tk
-from tkinter import simpledialog, filedialog, messagebox
-class ParquetProvisioner:
-    def __init__(self, parquet_path):
-        self.parquet_path = parquet_path
-        self.mount_point = None
-    def run(self):
-        parquet_table = pq.read_table(self.parquet_path)
-        metadata = parquet_table.schema.metadata
-        if metadata:
-            self.get_mount_point()  # Prompt user for the mount point
-            self.provision_schema(metadata)  # Create directory tree based on metadata
-            platform_key = self.get_platform_key()  # Identify OS-specific key
-            self.execute_platform_script(metadata, platform_key)  # Run any platform-specific script
 
-    def get_mount_point(self):
-        root = tk.Tk()
-        root.withdraw()  # Hide the root windo
-        self.mount_point = filedialog.askdirectory(title="Select Mount Point")
-        if not self.mount_point:
-            messagebox.showerror("Error", "You must select a valid mount point.")
-            sys.exit(1)
+from config_controller import MainWidgetWindow  # Assuming MainWidgetWindow is in 'config_controller.py'
 
-    def provision_schema(self, metadata):
-        directory_tree = json.loads(metadata[b'directory_tree'].decode('utf-8'))
-        uuid_dirname_mapping = json.loads(metadata[b'uuid_dirname_mapping'].decode('utf-8'))
+class MainApp(QMainWindow):
+    def __init__(self, config_path=None):
+        super().__init__()
+        self.setWindowTitle("Production App Wrapper")
+        self.setGeometry(100, 100, 1000, 800)
 
-        # Create a dictionary to track full paths to avoid duplications
-        full_paths = {}
+        # Create the central widget and its layout
+        central_widget = QWidget()
+        self.central_layout = QVBoxLayout(central_widget)
+        self.setCentralWidget(central_widget)
 
-        for parent_uuid, children in directory_tree.items():
-            parent_dir = uuid_dirname_mapping.get(parent_uuid)
+        # Top buttons layout
+        button_layout = QHBoxLayout()
 
-            if not parent_dir:
-                continue
+        # Dummy buttons (as placeholders)
+        dummy_button1 = QPushButton("Dummy Button 1")
+        dummy_button2 = QPushButton("Dummy Button 2")
+        button_layout.addWidget(dummy_button1)
+        button_layout.addWidget(dummy_button2)
 
-            # Get or create the full path for the parent directory
-            if parent_uuid not in full_paths:
-                parent_dir_path = os.path.join(self.mount_point, parent_dir)
-                full_paths[parent_uuid] = parent_dir_path
-                os.makedirs(parent_dir_path, exist_ok=True)
+        # Load button to choose the directory
+        load_button = QPushButton("Load")
+        load_button.clicked.connect(self.load_directory)  # Connect to load_directory method
+        button_layout.addWidget(load_button)
 
-            # Now process the children directories
-            for child in children:
-                child_name = uuid_dirname_mapping.get(child["id"])
+        # Add the button layout to the main layout
+        self.central_layout.addLayout(button_layout)
 
-                if child_name:
-                    # Build the full path for the child directory
-                    child_dir_path = os.path.join(full_paths[parent_uuid], child_name)
-                    full_paths[child["id"]] = child_dir_path
-                    os.makedirs(child_dir_path, exist_ok=True)
+        # Initialize the MainWidgetWindow
+        self.main_widget = None
 
-            print(f"Processed {parent_dir} -> {children}")
+        # Initial config path if provided
+        if config_path:
+            self.load_main_widget(config_path)
 
-    def execute_platform_script(self, metadata, platform_key):
-        # Execute the platform-specific script after provisioning the directory structure.
-        
-        platform_scripts = json.loads(metadata.get(b'platform_scripts', '{{}}').decode('utf-8'))
-        if platform_key in platform_scripts:
-            row_index = int(platform_scripts[platform_key])
-            script = pq.read_table(self.parquet_path).to_pandas().iloc[row_index, 0]
-            # Replace placeholder with the actual mount point
-            script = script.replace("MNTPOINT", self.mount_point)
-            print('Executing script:')
-            print(script)
-            if platform.system().lower() == 'windows':
-                shell = 'powershell.exe'
-                flag = '-Command'
-            else:
-                shell = '/bin/bash'
-                flag = '-c'
-            try:
-                result = subprocess.run([shell, flag, script], check=True, capture_output=True, text=True)
-                print(f"Stdout: {{result.stdout}}")
-                print(f"Stderr: {{result.stderr}}")
-            except subprocess.CalledProcessError as e:
-                print(f"Script execution failed: {{e}}")
-                print(f"Stdout: {{e.stdout}}")
-                print(f"Stderr: {{e.stderr}}")
-    def get_platform_key(self):
-        # Identify the current operating system and return the appropriate script key
-        system_platform = platform.system().lower()
-        if system_platform == "windows":
-            return "win_script"
-        elif system_platform == "darwin":
-            return "darwin_script"
-        elif system_platform == "linux":
-            return "linux_script"
+    def load_directory(self):
+        """Open a file dialog to select the config directory."""
+        config_dir = QFileDialog.getExistingDirectory(self, "Select Config Directory")
+
+        if config_dir:
+            print(f"Selected directory: {config_dir}")
+            self.load_main_widget(config_dir)
+
+    def load_main_widget(self, config_path):
+        """Load or update the MainWidgetWindow with the selected config path."""
+        # If the main widget already exists, just update its root path
+        if self.main_widget:
+            self.main_widget.update_root_path(config_path)  # Update existing widget
         else:
-            raise Exception("Unsupported platform!")
+            # Otherwise, create the main widget and add it to the layout
+            self.main_widget = MainWidgetWindow(config_path)
+            self.central_layout.addWidget(self.main_widget)  # Add it to the layout
+
+# Simulate how the module will be used in production
+def run_app(config_path=None):
+    app = QApplication(sys.argv)
+
+    main_app_window = MainApp(config_path)
+
+    # Show the window
+    main_app_window.show()
+
+    # Run the application loop
+    sys.exit(app.exec())
+
+# Entry point for the application
 if __name__ == "__main__":
-    # Check if a Parquet file path is passed as a command-line argument
-    if len(sys.argv) > 1:
-        parquet_file_path = sys.argv[1]  # Take the first argument as the Parquet file path
-    else:
-        messagebox.showerror("Error", "Please provide a Parquet file path as a command-line argument.")
-        sys.exit(1)  # Exit if no argument is provide
-    provisioner = ParquetProvisioner(parquet_file_path)
-    provisioner.run()
+    # Optionally hardcode the directory or leave it empty to prompt for selection
+    config_dir = os.path.expanduser("~/Downloads/aufs_packaging/my_configs/boo")
+
+    # Call the function that runs the application (use None to prompt user)
+    run_app(config_dir)  # Or run_app(None) to prompt user

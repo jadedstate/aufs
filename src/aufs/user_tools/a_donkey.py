@@ -1,78 +1,90 @@
-from PySide6.QtWidgets import QMainWindow, QApplication, QVBoxLayout, QHBoxLayout, QPushButton, QWidget, QFileDialog
-import sys
-import os
+import pandas as pd
+from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
+import pyarrow.parquet as pq
+from parquet_metadata_editor import MetadataObjectsList
 
-from config_controller import MainWidgetWindow  # Assuming MainWidgetWindow is in 'config_controller.py'
+# Load metadata from the Parquet file
+def load_metadata_from_parquet(parquet_file_path):
+    """
+    Load metadata from a Parquet file and return a dictionary of metadata containers.
+    This includes file-level, column-level, and row-group-level metadata.
+    """
+    parquet_file = pq.ParquetFile(parquet_file_path)
+    metadata_containers = {}
 
-class MainApp(QMainWindow):
-    def __init__(self, config_path=None):
-        super().__init__()
-        self.setWindowTitle("Production App Wrapper")
-        self.setGeometry(100, 100, 1000, 800)
+    # --- File-level metadata ---
+    file_metadata = parquet_file.metadata.metadata
+    if file_metadata:
+        metadata_containers["File"] = pd.DataFrame(
+            [(k.decode('utf-8'), v.decode('utf-8') if isinstance(v, bytes) else v) for k, v in file_metadata.items()],
+            columns=['Key', 'Value']
+        )
 
-        # Create the central widget and its layout
-        central_widget = QWidget()
-        self.central_layout = QVBoxLayout(central_widget)
-        self.setCentralWidget(central_widget)
+    # --- Column-level metadata ---
+    for i, field in enumerate(parquet_file.schema_arrow):
+        column_metadata = field.metadata
+        if column_metadata:
+            metadata_containers[f"Column:{i}"] = pd.DataFrame(
+                [(k.decode('utf-8'), v.decode('utf-8') if isinstance(v, bytes) else v) for k, v in column_metadata.items()],
+                columns=['Key', 'Value']
+            )
 
-        # Top buttons layout
-        button_layout = QHBoxLayout()
+    # --- Row-group-level metadata ---
+    for rg_index in range(parquet_file.metadata.num_row_groups):
+        row_group = parquet_file.metadata.row_group(rg_index)
+        row_group_metadata = row_group.to_dict()
+        metadata_containers[f"RowGroup:{rg_index}"] = pd.DataFrame(
+            [(k, v) for k, v in row_group_metadata.items()],
+            columns=['Key', 'Value']
+        )
 
-        # Dummy buttons (as placeholders)
-        dummy_button1 = QPushButton("Dummy Button 1")
-        dummy_button2 = QPushButton("Dummy Button 2")
-        button_layout.addWidget(dummy_button1)
-        button_layout.addWidget(dummy_button2)
+    return metadata_containers
 
-        # Load button to choose the directory
-        load_button = QPushButton("Load")
-        load_button.clicked.connect(self.load_directory)  # Connect to load_directory method
-        button_layout.addWidget(load_button)
+# Function to select which metadata container the user wants to edit
+def select_metadata_container(metadata_containers):
+    """
+    Display a dialog for the user to select which metadata container to edit.
+    """
+    container_options = list(metadata_containers.keys())
+    item, ok = QInputDialog.getItem(
+        None, "Select Metadata Container", 
+        "Choose the metadata container to edit:", container_options, 0, False
+    )
 
-        # Add the button layout to the main layout
-        self.central_layout.addLayout(button_layout)
+    if ok and item:
+        return item
+    else:
+        QMessageBox.warning(None, "No Selection", "No metadata container was selected.")
+        return None
 
-        # Initialize the MainWidgetWindow
-        self.main_widget = None
+# Main function to load metadata and allow the user to edit a selected container
+def main(parquet_file_path):
+    app = QApplication([])
 
-        # Initial config path if provided
-        if config_path:
-            self.load_main_widget(config_path)
+    # Step 1: Load all metadata containers from the Parquet file
+    metadata_containers = load_metadata_from_parquet(parquet_file_path)
 
-    def load_directory(self):
-        """Open a file dialog to select the config directory."""
-        config_dir = QFileDialog.getExistingDirectory(self, "Select Config Directory")
+    # Step 2: Let the user select which metadata container to edit
+    selected_container_key = select_metadata_container(metadata_containers)
 
-        if config_dir:
-            print(f"Selected directory: {config_dir}")
-            self.load_main_widget(config_dir)
+    if not selected_container_key:
+        return  # If no selection was made, exit the app
 
-    def load_main_widget(self, config_path):
-        """Load or update the MainWidgetWindow with the selected config path."""
-        # If the main widget already exists, just update its root path
-        if self.main_widget:
-            self.main_widget.update_root_path(config_path)  # Update existing widget
-        else:
-            # Otherwise, create the main widget and add it to the layout
-            self.main_widget = MainWidgetWindow(config_path)
-            self.central_layout.addWidget(self.main_widget)  # Add it to the layout
+    # Step 3: Pass the selected metadata container (as DataFrame) to the editor
+    metadata_df = metadata_containers[selected_container_key]
+    editor_window = MetadataObjectsList(metadata_df=metadata_df)
+    editor_window.show()
 
-# Simulate how the module will be used in production
-def run_app(config_path=None):
-    app = QApplication(sys.argv)
+    # Run the application (this will block until the UI is closed)
+    app.exec()
 
-    main_app_window = MainApp(config_path)
+    # Step 4: After the editor closes, get the modified DataFrame
+    modified_metadata_df = editor_window.get_modified_metadata()
 
-    # Show the window
-    main_app_window.show()
+    # Step 5: Here you would save the modified DataFrame (back to Parquet, JSON, etc.)
+    print("Modified Metadata for:", selected_container_key)
+    print(modified_metadata_df)
 
-    # Run the application loop
-    sys.exit(app.exec())
-
-# Entry point for the application
-if __name__ == "__main__":
-    # Optionally hardcode the directory or leave it empty to prompt for selection
-    config_dir = os.path.expanduser("~/Downloads/aufs_packaging/my_configs/boo")
-
-    # Call the function that runs the application (use None to prompt user)
-    run_app(config_dir)  # Or run_app(None) to prompt user
+if __name__ == '__main__':
+    parquet_file = "/Users/uel/Dasein/daseinVfxPipe/pipeline/GitHub/steve-smb-002.parquet"
+    main(parquet_file)

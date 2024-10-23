@@ -4,6 +4,12 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from PySide6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, QPushButton, QLineEdit, QLabel, QFileDialog, QTreeWidget, QTreeWidgetItem, QMessageBox, QCheckBox)
 from PySide6.QtCore import Qt
+
+# Add the `src` directory to the Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_path = os.path.join(current_dir, '..', '..', '..')  # Adjust to point to the `src` folder
+sys.path.insert(0, src_path)
+
 from src.aufs.core.extractor import extract_table
 import re
 import ast  # To convert string representation of metadata back to a dictionary

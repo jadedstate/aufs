@@ -2,13 +2,48 @@ import os
 import pandas as pd
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableView, QPushButton, QGridLayout, QComboBox, QMessageBox, QInputDialog, QTreeWidgetItem, QTreeWidget,
-    QMenu, QTextEdit, QLabel
+    QMenu, QTextEdit, QLabel, QWidget, QStyledItemDelegate
 )
 from PySide6.QtCore import Qt
 from editable_pandas_model import EditablePandasModel
 
-class PopupEditor(QDialog):
-    def __init__(self, file_path=None, dataframe_input=None, file_type='parquet', nested_mode=False, parent=None):
+class CustomDelegate(QStyledItemDelegate):
+    def __init__(self, value_options, parent=None):
+        super().__init__(parent)
+        self.value_options = value_options
+
+    def createEditor(self, parent, option, index):
+        column_name = index.model()._dataframe.columns[index.column()]
+        
+        # Check if we have value options for the column
+        if column_name in self.value_options:
+            combo_box = QComboBox(parent)
+            combo_box.addItems(self.value_options[column_name])
+            return combo_box
+
+        # Otherwise, return the default editor
+        return super().createEditor(parent, option, index)
+
+    def setEditorData(self, editor, index):
+        column_name = index.model()._dataframe.columns[index.column()]
+        value = index.model().data(index, Qt.EditRole)
+
+        if isinstance(editor, QComboBox):
+            current_index = editor.findText(str(value))
+            if current_index >= 0:
+                editor.setCurrentIndex(current_index)
+        else:
+            super().setEditorData(editor, index)
+
+    def setModelData(self, editor, model, index):
+        if isinstance(editor, QComboBox):
+            value = editor.currentText()
+            model.setData(index, value, Qt.EditRole)
+        else:
+            super().setModelData(editor, model, index)
+
+class DeepEditor(QWidget):
+    def __init__(self, file_path=None, dataframe_input=None, value_options=None, file_type='parquet', nested_mode=False, parent=None, button_flags=None):
         super().__init__(parent)
         self.current_tree_dialog = None
         self.current_row = None
@@ -33,12 +68,32 @@ class PopupEditor(QDialog):
 
         self.resize(1000, 800)
 
+        # Initialize button flags if not provided
+        if button_flags is None:
+            button_flags = {
+                'add_row': True,
+                'delete_row': True,
+                'move_row_up': True,
+                'move_row_down': True,
+                'add_column': True,
+                'delete_column': True,
+                'move_column_left': True,
+                'move_column_right': True,
+                'sort_column': True,
+                'clear_selection': True,
+                'set_column_type': True,
+                'dtype_dropdown': True,
+                'reload': True,
+                'save': True,
+                'exit': True
+            }
+
         # === Main Layout ===
         self.main_layout = QVBoxLayout(self)
 
         # === Initialize EditablePandasModel ===
-        self.model = EditablePandasModel(self.dataframe, editable=True, parent=self)
-        self.model.dataChanged.connect(self.track_changes)  # Track changes when data changes
+        self.model = EditablePandasModel(self.dataframe, value_options=value_options, editable=True, parent=self)
+        self.model.dataChanged.connect(self.track_changes)
 
         # === Central Layout ===
         self.central_layout = QHBoxLayout()
@@ -46,17 +101,29 @@ class PopupEditor(QDialog):
         # === Left side vertical button layout ===
         self.left_button_layout = QVBoxLayout()
 
-        # Add Row button (full height)
+        # Add Row button
         self.add_row_button = QPushButton("Add Row", self)
+        self.add_row_button.setEnabled(button_flags.get('add_row', True))
+        if not button_flags.get('add_row', True):
+            self.add_row_button.hide()
         self.left_button_layout.addWidget(self.add_row_button)
 
-        # Delete Row button (below Add Row)
+        # Delete Row button
         self.delete_row_button = QPushButton("Delete Row", self)
+        self.delete_row_button.setEnabled(button_flags.get('delete_row', True))
+        if not button_flags.get('delete_row', True):
+            self.delete_row_button.hide()
         self.left_button_layout.addWidget(self.delete_row_button)
 
-        # Move Row Up/Down buttons (stacked vertically, full height)
+        # Move Row Up/Down buttons
         self.move_row_up_button = QPushButton("Move Row Up", self)
+        self.move_row_up_button.setEnabled(button_flags.get('move_row_up', True))
+        if not button_flags.get('move_row_up', True):
+            self.move_row_up_button.hide()
         self.move_row_down_button = QPushButton("Move Row Down", self)
+        self.move_row_down_button.setEnabled(button_flags.get('move_row_down', True))
+        if not button_flags.get('move_row_down', True):
+            self.move_row_down_button.hide()
         self.left_button_layout.addWidget(self.move_row_up_button)
         self.left_button_layout.addWidget(self.move_row_down_button)
 
@@ -66,62 +133,105 @@ class PopupEditor(QDialog):
         # === TableView for displaying the DataFrame ===
         self.table_view = QTableView(self)
         self.table_view.setModel(self.model)
+        delegate = CustomDelegate(value_options=value_options, parent=self.table_view)
+        self.table_view.setItemDelegate(delegate)
         self.central_layout.addWidget(self.table_view)
 
-        # === Top button layout (above the table) ===
-        self.top_button_layout = QGridLayout()
+        # === Top button layout (use QVBox and QHBox to replace QGridLayout) ===
+        self.top_button_layout = QVBoxLayout()  # Using QVBoxLayout for vertical stacking
 
-        # Add Column button (first row)
+        # Create a horizontal layout to group similar buttons together
+        button_row_1 = QHBoxLayout()  # First row of buttons
         self.add_column_button = QPushButton("Add Column", self)
-        self.top_button_layout.addWidget(self.add_column_button, 0, 0)
+        self.add_column_button.setEnabled(button_flags.get('add_column', True))
+        if not button_flags.get('add_column', True):
+            self.add_column_button.hide()
+        button_row_1.addWidget(self.add_column_button)
 
-        # Delete Column button (beside Add Column)
         self.delete_column_button = QPushButton("Delete Column", self)
-        self.top_button_layout.addWidget(self.delete_column_button, 0, 1)
+        self.delete_column_button.setEnabled(button_flags.get('delete_column', True))
+        if not button_flags.get('delete_column', True):
+            self.delete_column_button.hide()
+        button_row_1.addWidget(self.delete_column_button)
 
-        # Move Column Left/Right buttons (second row)
+
+        # Second row of buttons
+        button_row_2 = QHBoxLayout()  # Another horizontal row of buttons
         self.move_column_left_button = QPushButton("Move Column Left", self)
+        self.move_column_left_button.setEnabled(button_flags.get('move_column_left', True))
+        if not button_flags.get('move_column_left', True):
+            self.move_column_left_button.hide()
+        button_row_2.addWidget(self.move_column_left_button)
+
         self.move_column_right_button = QPushButton("Move Column Right", self)
-        self.top_button_layout.addWidget(self.move_column_left_button, 4, 0)
-        self.top_button_layout.addWidget(self.move_column_right_button, 4, 1)
+        self.move_column_right_button.setEnabled(button_flags.get('move_column_right', True))
+        if not button_flags.get('move_column_right', True):
+            self.move_column_right_button.hide()
+        button_row_2.addWidget(self.move_column_right_button)
 
-        # Sort Column button (third row)
+
+        # Sort Column button in a separate horizontal row
+        button_row_3 = QHBoxLayout()
         self.sort_column_button = QPushButton("Sort Column", self)
-        self.top_button_layout.addWidget(self.sort_column_button, 1, 0)
+        self.sort_column_button.setEnabled(button_flags.get('sort_column', True))
+        if not button_flags.get('sort_column', True):
+            self.sort_column_button.hide()
+        button_row_3.addWidget(self.sort_column_button)
+        self.top_button_layout.addLayout(button_row_3)
 
-        # Clear Selected Data button (fourth row)
+        # Clear Selected Data and Dropdown Layout
+        button_row_4 = QHBoxLayout()
         self.clear_selection_button = QPushButton("Clear Selected Data", self)
-        self.top_button_layout.addWidget(self.clear_selection_button, 2, 0)
+        self.clear_selection_button.setEnabled(button_flags.get('clear_selection', True))
+        if not button_flags.get('clear_selection', True):
+            self.clear_selection_button.hide()
+        button_row_4.addWidget(self.clear_selection_button)
 
-        # === Data Type Dropdown ===
+
+        # Clear Selected Data and Dropdown Layout
+        button_row_5 = QHBoxLayout()
+        
         self.dtype_dropdown = QComboBox(self)
         self.dtype_dropdown.addItems(self.model.get_valid_dtypes())
-        self.top_button_layout.addWidget(self.dtype_dropdown, 3, 0)
+        if not button_flags.get('dtype_dropdown', True):
+            self.dtype_dropdown.hide()
+        button_row_5.addWidget(self.dtype_dropdown)
 
-        # Set Column Type button (fifth row)
         self.set_column_type_button = QPushButton("Set Column Type", self)
-        self.top_button_layout.addWidget(self.set_column_type_button, 3, 1)
+        self.set_column_type_button.setEnabled(button_flags.get('set_column_type', True))
+        if not button_flags.get('set_column_type', True):
+            self.set_column_type_button.hide()
+        button_row_5.addWidget(self.set_column_type_button)
 
-        # Add top buttons above the table
-        self.main_layout.addLayout(self.top_button_layout)
+        self.top_button_layout.addLayout(button_row_1) # add/delete col
+        self.top_button_layout.addLayout(button_row_3) # sort col
+        self.top_button_layout.addLayout(button_row_5) # change col data type
+        self.top_button_layout.addLayout(button_row_4) # clear selected cells
+        self.top_button_layout.addLayout(button_row_2) # move col left/right
         
-        # Add the central layout (table and buttons) to the main layout
+        # Add top button layout to the main layout
+        self.main_layout.addLayout(self.top_button_layout)
         self.main_layout.addLayout(self.central_layout)
 
-        # === Footer buttons (below the table) ===
+        # === Footer buttons ===
         self.footer_layout = QHBoxLayout()
-
-        # Reload button
         self.reload_button = QPushButton("Reload", self)
+        self.reload_button.setEnabled(button_flags.get('reload', True))
+        if not button_flags.get('reload', True):
+            self.reload_button.hide()
         self.footer_layout.addWidget(self.reload_button)
 
-        # Save and Exit buttons
         self.save_button = QPushButton("Save", self)
+        self.save_button.setEnabled(button_flags.get('save', True))
+        if not button_flags.get('save', True):
+            self.save_button.hide()
         self.exit_button = QPushButton("Exit", self)
+        self.exit_button.setEnabled(button_flags.get('exit', True))
+        if not button_flags.get('exit', True):
+            self.exit_button.hide()
         self.footer_layout.addWidget(self.save_button)
         self.footer_layout.addWidget(self.exit_button)
 
-        # Add footer buttons to the main layout
         self.main_layout.addLayout(self.footer_layout)
 
         # === Button Connections ===
@@ -140,11 +250,9 @@ class PopupEditor(QDialog):
         self.save_button.clicked.connect(self.save_file)
         self.exit_button.clicked.connect(self.close)
 
-        # Enable custom context menu if in nested mode
-        self.table_view.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table_view.customContextMenuRequested.connect(self.open_context_menu)
+        if self.nested_mode:
+            self.enable_nested_mode()
 
-        # Load the DataFrame based on input source
         self.load_data()
 
     def load_data(self):
@@ -363,33 +471,6 @@ class PopupEditor(QDialog):
         if index.isValid():
             selected_dtype = self.dtype_dropdown.currentText()
             self.model.set_column_dtype(index.column(), selected_dtype)
-
-    def contextMenuEvent(self, event):
-        # Get the position of the right-click event in global coordinates
-        global_position = event.globalPos()
-        
-        # Map the global position to the table view's local position
-        local_position = self.table_view.viewport().mapFromGlobal(global_position)
-        
-        # Get the index at the clicked position
-        index = self.table_view.indexAt(local_position)
-        
-        if index.isValid():
-            self.current_row, self.current_col = index.row(), index.column()  # Store row and col
-            
-            # Get the nested structure for the selected cell from the model
-            nested_structure = self.model.get_nested_structure_for_cell(self.current_row, self.current_col)
-            print(f"Nested structure for cell [{self.current_row}, {self.current_col}]: {nested_structure}")
-            
-            # Create a context menu at the mouse position
-            menu = QMenu(self)
-            action = menu.addAction("View Nested Structure")
-            
-            # Show the menu at the global position
-            selected_action = menu.exec_(global_position)
-
-            if selected_action == action:
-                self.show_tree_view(nested_structure)
 
     def show_tree_view(self):
         """Display the tree view built from the id_df directly."""

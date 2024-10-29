@@ -6,7 +6,7 @@ import pandas as pd
 from scraper import DirectoryScraper
 from popup_editor import PopupEditor
 
-class ConfigController(QTabWidget):
+class DirectoryTabbedView(QTabWidget):
     def __init__(self, dataframe: pd.DataFrame, root_path: str, parent=None):
         super().__init__(parent)
         self.dataframe = dataframe
@@ -319,7 +319,7 @@ class MainWidgetWindow(QMainWindow):
         self.main_layout.addLayout(self.button_layout)
 
         # Initially show the tabbed widget
-        self.tab_widget = ConfigController(self.dataframe, root_path)
+        self.tab_widget = DirectoryTabbedView(self.dataframe, root_path)
         self.tree_view_widget = DirectoryTreeView(self.dataframe, root_path)
         self.current_view = "tree"  # Start with the tab view
 

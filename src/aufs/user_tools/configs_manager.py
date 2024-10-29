@@ -97,7 +97,7 @@ class ConfigsManagerApp(QMainWindow):
         right_layout = QVBoxLayout(right_widget)
 
         tab_control_layout = QHBoxLayout()
-        self.edit_tabs_config_button = QPushButton("Edit Tabs Config")
+        self.edit_tabs_config_button = QPushButton("Does nothing Button")
         tab_control_layout.addWidget(self.edit_tabs_config_button)
         self.edit_tabs_config_button.clicked.connect(self.open_popup_editor)
 
@@ -199,7 +199,7 @@ class ConfigsManagerApp(QMainWindow):
         """Open the CList (CSV file) in a popup editor for editing."""
         # csv_file = os.path.expanduser("~/.aufs/configs_main.csv")
         if os.path.exists(self.csv_file):
-            editor = PopupEditor(self.csv_file)
+            editor = PopupEditor(self.csv_file, file_type='csv')
             editor.exec()
             self.load_from_csv()
         else:

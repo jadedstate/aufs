@@ -177,7 +177,6 @@ class DeepEditor(QWidget):
         if not button_flags.get('sort_column', True):
             self.sort_column_button.hide()
         button_row_3.addWidget(self.sort_column_button)
-        self.top_button_layout.addLayout(button_row_3)
 
         # Clear Selected Data and Dropdown Layout
         button_row_4 = QHBoxLayout()
@@ -187,7 +186,6 @@ class DeepEditor(QWidget):
             self.clear_selection_button.hide()
         button_row_4.addWidget(self.clear_selection_button)
 
-
         # Clear Selected Data and Dropdown Layout
         button_row_5 = QHBoxLayout()
         
@@ -195,13 +193,13 @@ class DeepEditor(QWidget):
         self.dtype_dropdown.addItems(self.model.get_valid_dtypes())
         if not button_flags.get('dtype_dropdown', True):
             self.dtype_dropdown.hide()
-        button_row_5.addWidget(self.dtype_dropdown)
 
         self.set_column_type_button = QPushButton("Set Column Type", self)
         self.set_column_type_button.setEnabled(button_flags.get('set_column_type', True))
         if not button_flags.get('set_column_type', True):
             self.set_column_type_button.hide()
         button_row_5.addWidget(self.set_column_type_button)
+        button_row_5.addWidget(self.dtype_dropdown)
 
         self.top_button_layout.addLayout(button_row_1) # add/delete col
         self.top_button_layout.addLayout(button_row_3) # sort col
@@ -494,15 +492,15 @@ class DeepEditor(QWidget):
         layout.addWidget(tree)
 
         # Add buttons below the tree
-        button_layout = QHBoxLayout()
+        tv_button_layout = QHBoxLayout()
         edit_button = QPushButton("Edit", self.current_tree_dialog)
         nest_button = QPushButton("Nest", self.current_tree_dialog)
         delete_button = QPushButton("Delete Selected", self.current_tree_dialog)
 
-        button_layout.addWidget(edit_button)
-        button_layout.addWidget(nest_button)
-        button_layout.addWidget(delete_button)
-        layout.addLayout(button_layout)
+        tv_button_layout.addWidget(edit_button)
+        tv_button_layout.addWidget(nest_button)
+        tv_button_layout.addWidget(delete_button)
+        layout.addLayout(tv_button_layout)
 
         edit_button.clicked.connect(lambda: self.edit_node(tree.currentItem()))
         nest_button.clicked.connect(lambda: self.nest_node(tree.currentItem()))
@@ -616,12 +614,12 @@ class DeepEditor(QWidget):
         layout.addWidget(data_type_combo)
 
         # Buttons for confirmation
-        button_layout = QHBoxLayout()
+        ne_conf_button_layout = QHBoxLayout()
         save_button = QPushButton("Nest", dialog)
         cancel_button = QPushButton("Cancel", dialog)
-        button_layout.addWidget(save_button)
-        button_layout.addWidget(cancel_button)
-        layout.addLayout(button_layout)
+        ne_conf_button_layout.addWidget(save_button)
+        ne_conf_button_layout.addWidget(cancel_button)
+        layout.addLayout(ne_conf_button_layout)
 
         # Connect the buttons
         save_button.clicked.connect(lambda: self.confirm_nesting(existing_items_combo, data_type_combo, data_package, node_uuid, dialog))
@@ -641,16 +639,16 @@ class DeepEditor(QWidget):
         layout.addWidget(QLabel("The selected data is not a list or dictionary. Would you like to convert it?"))
 
         # Offer conversion options
-        button_layout = QHBoxLayout()
+        oc_button_layout = QHBoxLayout()
         convert_to_list_button = QPushButton("Convert to List", dialog)
         convert_to_dict_button = QPushButton("Convert to Dictionary", dialog)
         cancel_button = QPushButton("Cancel", dialog)
         
-        button_layout.addWidget(convert_to_list_button)
-        button_layout.addWidget(convert_to_dict_button)
-        button_layout.addWidget(cancel_button)
+        oc_button_layout.addWidget(convert_to_list_button)
+        oc_button_layout.addWidget(convert_to_dict_button)
+        oc_button_layout.addWidget(cancel_button)
 
-        layout.addLayout(button_layout)
+        layout.addLayout(oc_button_layout)
 
         # Connect the buttons
         convert_to_list_button.clicked.connect(lambda: self.convert_data_and_nest(item, "list", node_uuid, dialog))
@@ -753,13 +751,13 @@ class DeepEditor(QWidget):
         text_box.setText(value)
         layout.addWidget(text_box)
 
-        button_layout = QHBoxLayout()
+        ste_button_layout = QHBoxLayout()
         save_button = QPushButton("Save", dialog)
         cancel_button = QPushButton("Cancel", dialog)
-        button_layout.addWidget(save_button)
-        button_layout.addWidget(cancel_button)
+        ste_button_layout.addWidget(save_button)
+        ste_button_layout.addWidget(cancel_button)
 
-        layout.addLayout(button_layout)
+        layout.addLayout(ste_button_layout)
         dialog.setLayout(layout)
 
         save_button.clicked.connect(lambda: self.confirm_edit(item, text_box.toPlainText(), dialog))
@@ -850,18 +848,18 @@ class NestedEditor(QDialog):
         layout.addWidget(self.table_view)
         
         # Add row/column controls
-        button_layout = QHBoxLayout()
+        ne_button_layout = QHBoxLayout()
         if not self.is_struct:  # Allow adding rows for lists/dicts, but not for structs
             self.add_row_button = QPushButton("Add Row", self)
             self.delete_row_button = QPushButton("Delete Row", self)
-            button_layout.addWidget(self.add_row_button)
-            button_layout.addWidget(self.delete_row_button)
+            ne_button_layout.addWidget(self.add_row_button)
+            ne_button_layout.addWidget(self.delete_row_button)
         
         self.move_row_up_button = QPushButton("Move Row Up", self)
         self.move_row_down_button = QPushButton("Move Row Down", self)
-        button_layout.addWidget(self.move_row_up_button)
-        button_layout.addWidget(self.move_row_down_button)
-        layout.addLayout(button_layout)
+        ne_button_layout.addWidget(self.move_row_up_button)
+        ne_button_layout.addWidget(self.move_row_down_button)
+        layout.addLayout(ne_button_layout)
 
         # Add Save and Cancel buttons
         save_cancel_layout = QHBoxLayout()

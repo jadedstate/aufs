@@ -3,16 +3,16 @@ import sys
 import pandas as pd
 import pyarrow.parquet as pq  # pyarrow for parquet file handling
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QMessageBox, QFileDialog
-)
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QMessageBox, QFileDialog, QFrame)
+from PySide6.QtGui import QPalette, QColor
 
 # Add the `src` directory to the Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 src_path = os.path.join(current_dir, '..', '..', '..')  # Adjust to point to the `src` folder
 sys.path.insert(0, src_path)
 
-from deep_editor import DeepEditor  # Assuming PopupEditor is a QWidget
 from src.aufs.utils import validate_schema
+from deep_editor import DeepEditor  # Assuming PopupEditor is a QWidget
 
 class ParquetSchemaEditor(QWidget):  # Now inheriting from QWidget instead of QDialog
     def __init__(self, parquet_file=None, dataframe_input=None, parent=None):
@@ -59,28 +59,37 @@ class ParquetSchemaEditor(QWidget):  # Now inheriting from QWidget instead of QD
         button_flags = {
             'exit': False,
             'save': False,
-            'sort_column': False
+            'sort_column': False,
+            'set_column_type': False,
+            'dtype_dropdown': False
         }
 
-        # === PopupEditor (Embedded here) ===
-        self.deep_editor = DeepEditor(value_options=value_options, button_flags=button_flags, nested_mode=True, parent=self)  # PopupEditor is now embedded as a QWidget
-
-
-        # Footer buttons for loading, creating new schema, saving, and exiting
-        self.footer_layout = QHBoxLayout()
+        self.schema_ui_layout = QHBoxLayout()
 
         self.load_button = QPushButton("Load Schema", self)
         self.create_schema_button = QPushButton("Create New Schema", self)
         self.save_button = QPushButton("Save Schema", self)
         self.exit_button = QPushButton("Exit", self)
 
-        self.footer_layout.addWidget(self.load_button)
-        self.footer_layout.addWidget(self.create_schema_button)
-        self.footer_layout.addWidget(self.save_button)
-        self.footer_layout.addWidget(self.exit_button)
+        self.schema_ui_layout.addWidget(self.load_button)
+        self.schema_ui_layout.addWidget(self.create_schema_button)
+        self.schema_ui_layout.addWidget(self.save_button)
+        self.schema_ui_layout.addWidget(self.exit_button)
 
-        # Add footer buttons to main layout
-        self.main_layout.addLayout(self.footer_layout)
+        self.main_layout.addLayout(self.schema_ui_layout)
+
+        # Create a horizontal line separator
+        self.separator_line = QFrame()
+        self.separator_line.setFrameShape(QFrame.HLine)
+        self.separator_line.setFrameShadow(QFrame.Sunken)
+
+        # Add the separator line to the main layout
+        self.main_layout.addWidget(self.separator_line)
+
+        # Then add the deep_editor below the separator line
+
+        # === PopupEditor (Embedded here) ===
+        self.deep_editor = DeepEditor(value_options=value_options, button_flags=button_flags, nested_mode=True, parent=self)  # PopupEditor is now embedded as a QWidget
         self.main_layout.addWidget(self.deep_editor)
 
         # Connect buttons to their respective functions

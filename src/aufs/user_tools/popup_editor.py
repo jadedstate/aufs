@@ -182,10 +182,10 @@ class PopupEditor(QDialog):
         if self.file_path:
             try:
                 if self.file_type == 'parquet':
-                    self.dataframe.to_parquet(self.file_path, index=False)
+                    self.save_parquet()
                 elif self.file_type == 'csv':
-                    self.dataframe.to_csv(self.file_path, index=False)
-                QMessageBox.information(self, "Success", "Changes saved successfully.")
+                    self.save_csv()
+                # QMessageBox.information(self, "Success", "Changes saved successfully.")
                 self.changes_made = False  # Reset changes tracking after saving
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to save file: {str(e)}")

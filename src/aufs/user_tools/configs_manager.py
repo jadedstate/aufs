@@ -10,25 +10,6 @@ from editable_pandas_model import EditablePandasModel
 from config_controller import MainWidgetWindow  # Import MainWidgetWindow
 from popup_editor import PopupEditor
 
-class ParquetPlaceholder:
-    def __init__(self):
-        self.root_parquet = None
-        self.root_directory = None
-
-    def select_parquet_root(self):
-        """Prompt user to select the root Parquet file location."""
-        self.root_parquet = QFileDialog.getExistingDirectory(None, "Select Parquet Root Directory")
-        if not self.root_parquet:
-            QMessageBox.warning(None, "No Directory Selected", "You must select a directory to continue.")
-        return self.root_parquet
-
-    def select_config_root(self):
-        """Prompt user to select the root directory where configs are located."""
-        self.root_directory = QFileDialog.getExistingDirectory(None, "Select Config Root Directory")
-        if not self.root_directory:
-            QMessageBox.warning(None, "No Directory Selected", "You must select a directory to continue.")
-        return self.root_directory
-
 class ConfigsManagerApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -251,6 +232,25 @@ class ConfigsManagerApp(QMainWindow):
         """Open the popup editor for editing tabs config."""
         editor = PopupEditor('path_to_config_or_file')  # Example: pass the path to the config
         editor.exec()
+
+class ParquetPlaceholder:
+    def __init__(self):
+        self.root_parquet = None
+        self.root_directory = None
+
+    def select_parquet_root(self):
+        """Prompt user to select the root Parquet file location."""
+        self.root_parquet = QFileDialog.getExistingDirectory(None, "Select Parquet Root Directory")
+        if not self.root_parquet:
+            QMessageBox.warning(None, "No Directory Selected", "You must select a directory to continue.")
+        return self.root_parquet
+
+    def select_config_root(self):
+        """Prompt user to select the root directory where configs are located."""
+        self.root_directory = QFileDialog.getExistingDirectory(None, "Select Config Root Directory")
+        if not self.root_directory:
+            QMessageBox.warning(None, "No Directory Selected", "You must select a directory to continue.")
+        return self.root_directory
 
 if __name__ == "__main__":
     app = QApplication([])

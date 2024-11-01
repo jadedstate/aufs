@@ -255,14 +255,19 @@ class DeepEditor(QWidget):
 
     def load_data(self):
         """Load data from a DataFrame or file."""
-        if self.dataframe_input is not None:
+        if self.dataframe_input is not None and isinstance(self.dataframe_input, pd.DataFrame):
+            # print("Loading data from provided DataFrame.")
+            # print(self.dataframe_input)
             self.load_from_dataframe(self.dataframe_input)
         else:
+            print("DataFrame input missing or invalid, loading from file.")
             self.load_file()
 
     def load_from_dataframe(self, dataframe):
         """Load directly from an in-memory DataFrame."""
         self.dataframe = dataframe
+        # print("this should be loaded: ")
+        # print(self.dataframe)
         self.model = EditablePandasModel(self.dataframe, editable=True, parent=self)
         self.table_view.setModel(self.model)
 
@@ -934,3 +939,4 @@ class NestedEditor(QDialog):
     def get_dataframe(self):
         """Return the edited DataFrame."""
         return self.model.get_dataframe()
+    

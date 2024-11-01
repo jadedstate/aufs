@@ -130,6 +130,7 @@ class DirectoryTreeView(QWidget):
             context_menu.exec(self.tree_widget.viewport().mapToGlobal(position))
 
     def open_tab_for_item(self, item):
+        # Build the full path from the tree structure
         path_parts = []
         current_item = item
         while current_item:
@@ -137,21 +138,29 @@ class DirectoryTreeView(QWidget):
             current_item = current_item.parent()
         full_path = os.path.join(self.root_path, *path_parts)
 
-        # Determine tab title based on the full path
+        # Check if the selected item is a file and use its parent directory for the tab
         if os.path.isfile(full_path):
             parent_path = os.path.dirname(full_path)
             tab_title = os.path.basename(parent_path)
+            path_for_tab = parent_path
         else:
-            tab_title = path_parts[-1]
+            tab_title = os.path.basename(full_path)
+            path_for_tab = full_path
 
-        for index in range(self.tab_widget.count()):
-            if self.tab_widget.tabText(index) == tab_title:
-                self.tab_widget.setCurrentIndex(index)
-                return
+        # Check if this directory path already has a tab open
+        if path_for_tab in self.tab_widget.tab_paths.values():
+            # If it exists, switch to the existing tab
+            tab_index = list(self.tab_widget.tab_paths.keys())[list(self.tab_widget.tab_paths.values()).index(path_for_tab)]
+            self.tab_widget.setCurrentIndex(tab_index)
+        else:
+            # Otherwise, create a new tab for this directory path
+            file_series = self.dataframe.get("/".join(path_parts), pd.Series([]))
+            tab_content = self.tab_widget.create_directory_tab(path_for_tab, file_series)
+            self.tab_widget.addTab(tab_content, tab_title)
 
-        tab_content = self.tab_widget.create_directory_tab(tab_title, self.dataframe.get(tab_title, pd.Series([])))
-        self.tab_widget.addTab(tab_content, tab_title)
-        self.tab_widget.setCurrentWidget(tab_content)
+            # Map this tab's full path in `tab_paths` for future reference
+            self.tab_widget.tab_paths[self.tab_widget.indexOf(tab_content)] = path_for_tab
+            self.tab_widget.setCurrentWidget(tab_content)
 
     def on_item_clicked(self, item, column):
         """Update the current directory and `selected_dir` based on the clicked item in the tree."""

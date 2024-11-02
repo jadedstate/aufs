@@ -1,46 +1,53 @@
 import os
+import sys
 import pandas as pd
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QTableView, QPushButton, QGridLayout, QComboBox, QMessageBox, QInputDialog, QTreeWidgetItem, QTreeWidget,
-    QMenu, QTextEdit, QLabel, QWidget, QStyledItemDelegate
+    QDialog, QVBoxLayout, QHBoxLayout, QTableView, QPushButton, QComboBox, QMessageBox, QInputDialog, QTreeWidgetItem, QTreeWidget,
+    QLineEdit, QTextEdit, QLabel, QWidget, QStyledItemDelegate
 )
 from PySide6.QtCore import Qt
-from editable_pandas_model import EditablePandasModel
+
+# Add the `src` directory to the Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_path = os.path.join(current_dir, '..', '..', '..')  # Adjust to point to the `src` folder
+sys.path.insert(0, src_path)
+
+from src.aufs.user_tools.editable_pandas_model import EditablePandasModel
 
 class CustomDelegate(QStyledItemDelegate):
-    def __init__(self, value_options, parent=None):
+    def __init__(self, value_options=None, parent=None):
         super().__init__(parent)
-        self.value_options = value_options
+        # Set default as an empty dictionary, making options truly optional
+        self.value_options = value_options or {}
 
     def createEditor(self, parent, option, index):
+        """Create a ComboBox editor if value options exist for the column; otherwise, use a default LineEdit."""
         column_name = index.model()._dataframe.columns[index.column()]
-        
-        # Check if we have value options for the column
+
+        # Check if the column has specific dropdown options
         if column_name in self.value_options:
             combo_box = QComboBox(parent)
             combo_box.addItems(self.value_options[column_name])
             return combo_box
 
-        # Otherwise, return the default editor
-        return super().createEditor(parent, option, index)
+        # Default to LineEdit for non-dropdown columns
+        return QLineEdit(parent)
 
     def setEditorData(self, editor, index):
-        column_name = index.model()._dataframe.columns[index.column()]
+        """Populate the editor with the current value."""
         value = index.model().data(index, Qt.EditRole)
 
         if isinstance(editor, QComboBox):
             current_index = editor.findText(str(value))
             if current_index >= 0:
                 editor.setCurrentIndex(current_index)
-        else:
-            super().setEditorData(editor, index)
+        elif isinstance(editor, QLineEdit):
+            editor.setText(str(value))
 
     def setModelData(self, editor, model, index):
-        if isinstance(editor, QComboBox):
-            value = editor.currentText()
-            model.setData(index, value, Qt.EditRole)
-        else:
-            super().setModelData(editor, model, index)
+        """Store the edited value back in the model."""
+        value = editor.currentText() if isinstance(editor, QComboBox) else editor.text()
+        model.setData(index, value, Qt.EditRole)
 
 class DeepEditor(QWidget):
     def __init__(self, file_path=None, dataframe_input=None, value_options=None, file_type='parquet', nested_mode=False, parent=None, button_flags=None):
@@ -260,7 +267,7 @@ class DeepEditor(QWidget):
             # print(self.dataframe_input)
             self.load_from_dataframe(self.dataframe_input)
         else:
-            print("DataFrame input missing or invalid, loading from file.")
+            print("Loading from file.")
             self.load_file()
 
     def load_from_dataframe(self, dataframe):

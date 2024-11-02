@@ -236,12 +236,19 @@ class DirectoryLoaderUI(QMainWindow):
 
     def open_editor(self, df):
         """Open the DeepEditor inside a modal dialog to display and edit the DataFrame."""
+        button_flags = {
+            'exit': False,
+            'save': False,
+            'sort_column': False,
+            'set_column_type': False,
+            'dtype_dropdown': False
+        }
         editor_dialog = QDialog(self)
         editor_dialog.setWindowTitle("Edit DataFrame")
         editor_dialog.setModal(True)
         editor_dialog.resize(1000, 800)
 
-        editor = DeepEditor(dataframe_input=df, parent=editor_dialog)
+        editor = DeepEditor(dataframe_input=df, button_flags=button_flags, parent=editor_dialog)
         layout = QVBoxLayout(editor_dialog)
         layout.addWidget(editor)
         editor_dialog.setLayout(layout)

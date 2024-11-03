@@ -221,6 +221,7 @@ class DirectoryLoaderUI(QMainWindow):
         os.makedirs(os.path.dirname(path_list_csv), exist_ok=True)
 
         shots_df = pd.read_csv(shots_csv)
+        # print(shots_df)
         dir_list_df = pd.DataFrame(self.directories, columns=["Directory Paths"])
 
         try:

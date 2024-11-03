@@ -1,3 +1,5 @@
+# src/aufs/user_tools/packaging/string_remapper.py
+
 import os
 
 class StringRemapper:

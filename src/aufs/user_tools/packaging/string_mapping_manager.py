@@ -15,7 +15,7 @@ from src.aufs.user_tools.packaging.string_remapper import StringRemapper  # The 
 class StringMappingManager(QWidget):
     def __init__(self, csv_path=None, parent=None):
         super().__init__(parent)
-        self.csv_path = '/Users/uel/.aufs/config/jobs/active/primary_vfx/THRG2/fs_updates/fs_data-primary_vfx_THRG2-20241101T161851Z.csv'
+        self.csv_path = '/Users/uel/.aufs/config/jobs/active/unit/rr_mumbai/fs_updates/fs_data-unit_rr_mumbai-20241103T062038Z.csv'
         self.setWindowTitle(f"CSV and Remap Tool: {os.path.basename(self.csv_path) if self.csv_path else 'Untitled'}")
         self.resize(1000, 900)
 
@@ -67,7 +67,7 @@ class StringMappingManager(QWidget):
         # ID Value input
         remap_layout.addWidget(QLabel("Enter ID Value:"))
         self.id_value_input = QLineEdit()
-        self.id_value_input.setText('/Users/uel/Desktop/old_screenshots/Screenshot 2024-05-07 at 20.22.%02d.jpeg')
+        self.id_value_input.setText('/Volumes/ofs-wasabi-london-01/jobs/unit/rr_mumbai/light/40S_090/images/40S_090_v030/BTy/sheen/40S_090_sheen_v030_lgroups.%04d.exr')
         remap_layout.addWidget(self.id_value_input)
 
         # Target Columns input (comma-separated list)
@@ -146,6 +146,27 @@ class StringMappingManager(QWidget):
         try:
             result = self.remapper.remap(id_header, id_value, target_columns)
             self.display_results(result)
+        except Exception as e:
+            QMessageBox.critical(self, "Remap Error", f"Failed to remap values: {str(e)}")
+
+    def map_requested_values(self, id_header, id_value, target_columns):
+        if not id_header or not id_value or not target_columns:
+            QMessageBox.warning(self, "Input Error", "Please fill in all fields.")
+            return
+
+        # Fetch the latest mappings DataFrame from DeepEditor and set it in StringRemapper
+        mappings_df = self.deep_editor.model.get_dataframe()
+        if mappings_df is not None:
+            self.remapper.set_mappings(mappings_df)
+        else:
+            QMessageBox.critical(self, "Error", "Failed to retrieve mappings DataFrame.")
+            return
+
+        # Perform remapping and display results
+        try:
+            result = self.remapper.remap(id_header, id_value, target_columns)
+            self.display_results(result)
+            return result
         except Exception as e:
             QMessageBox.critical(self, "Remap Error", f"Failed to remap values: {str(e)}")
 

@@ -543,6 +543,8 @@ def add_ITEM_columns(df, column_name):
     df['ITEMNAME'] = ''
     df['ITEMLOCATION'] = ''
     df['ITEMLOCATIONROOT'] = ''
+    print(df)
+    print("COLUMN NAME is: ", column_name)
     
     # Function to parse each row
     def parse_row(value):

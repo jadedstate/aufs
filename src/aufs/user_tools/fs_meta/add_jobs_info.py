@@ -25,21 +25,20 @@ def add_shot_names_to_df(df, shots_df):
         return df  # Return early if no valid PROJECT values are found
 
     df_allshots = shots_df
-    df['SHOTNAME'] = ''
-    
+    df['SHOTNAME'] = ''    
     unique_projects = df['PROJECT'].dropna().unique()
-
+    
     for project in unique_projects:
         # Isolate the working frame for the current project
         project_frame = df[df['PROJECT'] == project]
         # Iterate through each unique shot within the project
-        for _, shot_row in df_allshots[df_allshots['PROJECT'] == project].iterrows():
+        for _, shot_row in df_allshots.iterrows():
             shotname = shot_row['SHOTNAME']
             # Apply the mask for the current shotname within the project frame
             mask = project_frame['FILE'].str.contains(fr"{shotname}", case=True, na=False, regex=True)
             # Update SHOTNAME for matches
             df.loc[project_frame[mask].index, 'SHOTNAME'] = shotname
-    
+
     return df
 
 def add_shot_names_to_df_using_altshotnames(df, shots_df, ifNoName=True):
@@ -67,7 +66,7 @@ def add_shot_names_to_df_using_altshotnames(df, shots_df, ifNoName=True):
         project_frame = df_filtered[df_filtered['PROJECT'] == project]
 
         # Iterate through each unique shot within the project
-        for _, shot_row in df_allshots[df_allshots['PROJECT'] == project].iterrows():
+        for _, shot_row in df_allshots.iterrows():
             alt_shotname = shot_row.get('ALTSHOTNAME', None)
             shotname = shot_row['SHOTNAME']
             

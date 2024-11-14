@@ -1,59 +1,153 @@
-# src/aufs/user_tools/packaging/string_remapper.py
-
 import os
+import sys
+import pandas as pd
+from datetime import datetime
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_path = os.path.join(current_dir, '..', '..', '..', '..')
+sys.path.insert(0, src_path)
+
+from src.aufs.user_tools.packaging.version_controller import VersionController
 
 class StringRemapper:
-    def __init__(self, mappings_df=None):
+    def __init__(self, mappings_df=None, root_path=None, recipient=None, user=None):
+        """
+        Initialize the StringRemapper with optional mappings DataFrame and versioning controls.
+        
+        Parameters:
+        - mappings_df (pd.DataFrame): DataFrame containing remapping information.
+        - root_path (str): Root path for versioning controller.
+        - recipient (str): Recipient designation for versioning purposes.
+        - user (str): User or process identifier for version logging.
+        """
         self.mappings_df = mappings_df
+        self.version_controller = None
+        self.root_path = '/Users/uel/.aufs/config/jobs/active/unit/rr_mumbai/packaging'
+        self.recipient = 'amolesh'
+        self.user = user or "system"
+        self.working_versions = {}
+
+        self.version_controller = VersionController(
+            root_path=self.root_path,
+            recipient=self.recipient,
+            user=self.user,
+            working_versions=self.working_versions
+        )
 
     def set_mappings(self, mappings_df):
         """Sets or updates the mappings DataFrame."""
         self.mappings_df = mappings_df
 
-    def remap(self, id_column, id_value, target_columns):
+    def initialize_version_controller(self, v_format="v", padding=4):
         """
-        Retrieve remap values based on an ID column, ID value, and target columns.
-        Applies optional path logic based on REMAPTYPE in the mappings.
+        Initialize or re-initialize the VersionController with specific settings.
         
         Parameters:
-        - id_column (str): Column to use as ID for lookup (e.g., 'FILE' or 'REMAPTHIS').
-        - id_value (str): Value in the ID column to find the row.
-        - target_columns (list of str): List of column names to retrieve values for remapping.
-        
-        Returns:
-        - list of tuples: Each tuple contains (column_name, column_value), applying path logic if specified.
+        - v_format (str): Prefix format ('v', 'V', or 'no').
+        - padding (int): Number padding for version numbers.
+        """
+        self.version_controller = VersionController(
+            root_path=self.root_path, 
+            recipient=self.recipient, 
+            user=self.user,
+            v_format=v_format, 
+            padding=padding,
+            working_versions=self.working_versions
+        )
+
+    def remap(self, id_column, id_value, target_columns):
+        """
+        Perform the remapping process and keep track of versions for specified columns.
         """
         if self.mappings_df is None:
             raise ValueError("Mappings DataFrame is not set. Load a CSV file to initialize mappings.")
-
+        
         # Locate the row based on ID column and ID value
         row = self.mappings_df[self.mappings_df[id_column] == id_value]
         if row.empty:
-            raise ValueError(f"No mapping found for ID column '{id_column}' with value '{id_value}'")
-        
-        row_data = row.iloc[0]  # Get the first matching row
-        remap_type = row_data.get('REMAPTYPE', 'string')  # Default to simple string remapping
-        original_filename = os.path.basename(id_value)  # Extract filename for findfile types
+            return []  # Return an empty list if no match is found
 
-        # Build and return list of tuples for each target column
+        row_data = row.iloc[0]
+        self.row_data = row_data
+        remap_type = row_data.get('REMAPTYPE', 'string')
+        original_filename = os.path.basename(id_value)
+
         result = []
         for col in target_columns:
-            map_to_path = row_data.get(col, None)
-            if map_to_path and remap_type.endswith("-findfile-rec"):
-                # Recursive search for file
-                found_path = self._find_file(map_to_path, original_filename, recursive=True)
-            elif map_to_path and remap_type.endswith("-findfile-norec"):
-                # Non-recursive search for file
-                found_path = self._find_file(map_to_path, original_filename, recursive=False)
+            # Handle virtual columns
+            if col in ["VERSION", "YYYYMMDD", "PKGVERSION3PADDED"]:
+                value = self._handle_virtual_column(col, id_value)
             else:
-                # Standard remapping without file search (for generic strings)
-                found_path = map_to_path
-            
-            result.append((col, found_path))
+                # Regular columns
+                value = row_data.get(col, "")
+                if isinstance(value, str) and value.strip():
+                    if col == "PADDING":
+                        value = self._format_padding(value, row_data.get("PADDING_STYLE", "standard"))
+                    elif col == "DOTEXTENSION":
+                        value = self._adjust_dotextension(value, row_data.get("EXT_CASE", "default"))
+                    elif remap_type.endswith("-findfile-rec"):
+                        value = self._find_file(value, original_filename, recursive=True)
+                    elif remap_type.endswith("-findfile-norec"):
+                        value = self._find_file(value, original_filename, recursive=False)
+
+            result.append((col, value))
+        
+        # Log versions once remapping is complete
+        # self._log_final_versions()
         return result
 
+    def _handle_virtual_column(self, col, item):
+        """Handles virtual columns that require versioning or date formatting."""
+        if col == "VERSION" and self.version_controller:
+            item = self.row_data.get('PARENTITEM')
+            self.initialize_version_controller(v_format="v", padding=4)
+            version, self.working_versions = self.version_controller.retrieve_working_version(item)
+            return version
+
+        elif col == "YYYYMMDD":
+            return datetime.utcnow().strftime('%Y%m%d')
+
+        elif col == "PKGVERSION3PADDED":
+            item = "YYYYMMDD_PKGVERSION3PADDED"
+            self.initialize_version_controller(v_format="no", padding=3)
+            version, self.working_versions = self.version_controller.retrieve_working_version(item)
+            return version
+
+        return ""
+
+    def _format_padding(self, padding_value, style="standard"):
+        """Format padding based on a specified style: standard, hashed, or dollar."""
+        try:
+            padding_length = len(str(int(padding_value)))
+            padding_value = int(padding_value)
+            # print(padding_length)
+            if style == "standard":
+                # Use '%0Xd' if padding_length is a single character, otherwise '%Xd'
+                format_str = f"%0{padding_value}d" if padding_length == 1 else f"%{padding_value}d"
+                return format_str
+
+            elif style == "hashed":
+                # Create a string of '#' characters matching the padding length
+                return "#" * padding_value
+
+            elif style == "dollar":
+                # Append padding length to "$F"
+                return f"$F{padding_value}"
+
+        except ValueError:
+            # Return the original value if it cannot be parsed as an integer
+            return padding_value
+
+    def _adjust_dotextension(self, extension, case_option):
+        """Adjust file extension case based on the specified option."""
+        if case_option == "upper":
+            return extension.upper()
+        elif case_option == "lower":
+            return extension.lower()
+        return extension  # Default: no change
+
     def _find_file(self, directory, filename, recursive=True):
-        """Helper function to search for a file in a directory if path-specific remapping is specified."""
+        """Search for a file in a directory with optional recursion."""
         if recursive:
             for root, _, files in os.walk(directory):
                 if filename in files:
@@ -63,5 +157,11 @@ class StringRemapper:
                 item_path = os.path.join(directory, item)
                 if os.path.isfile(item_path) and os.path.basename(item_path) == filename:
                     return item_path
-        # Return None if file is not found
         return None
+
+    def log_final_versions(self):
+        """Log each final version in working_versions to the versioning directory."""
+        print("THESE are the WORKING_VERSIONS: ")
+        print(self.working_versions)
+        for item in self.working_versions:
+            self.version_controller.log_version(item)

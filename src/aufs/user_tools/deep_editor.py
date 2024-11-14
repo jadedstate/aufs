@@ -183,7 +183,7 @@ class DeepEditor(QWidget):
         self.sort_column_button.setEnabled(button_flags.get('sort_column', True))
         if not button_flags.get('sort_column', True):
             self.sort_column_button.hide()
-        button_row_3.addWidget(self.sort_column_button)
+        button_row_1.addWidget(self.sort_column_button)
 
         # Clear Selected Data and Dropdown Layout
         button_row_4 = QHBoxLayout()
@@ -191,7 +191,7 @@ class DeepEditor(QWidget):
         self.clear_selection_button.setEnabled(button_flags.get('clear_selection', True))
         if not button_flags.get('clear_selection', True):
             self.clear_selection_button.hide()
-        button_row_4.addWidget(self.clear_selection_button)
+        button_row_1.addWidget(self.clear_selection_button)
 
         # Clear Selected Data and Dropdown Layout
         button_row_5 = QHBoxLayout()
@@ -205,8 +205,8 @@ class DeepEditor(QWidget):
         self.set_column_type_button.setEnabled(button_flags.get('set_column_type', True))
         if not button_flags.get('set_column_type', True):
             self.set_column_type_button.hide()
-        button_row_5.addWidget(self.set_column_type_button)
-        button_row_5.addWidget(self.dtype_dropdown)
+        button_row_1.addWidget(self.set_column_type_button)
+        button_row_1.addWidget(self.dtype_dropdown)
 
         self.top_button_layout.addLayout(button_row_1) # add/delete col
         self.top_button_layout.addLayout(button_row_3) # sort col
@@ -329,11 +329,23 @@ class DeepEditor(QWidget):
             self.model = EditablePandasModel(self.dataframe, editable=True, parent=self)
             self.table_view.setModel(self.model)
 
-    def load_csv(self):
-        """Load the CSV file into a Pandas DataFrame."""
+    def load_csv(self, dtype_mapping=None):
+        """Load the CSV file into a Pandas DataFrame with specified column data types."""
         try:
             if os.path.exists(self.file_path):
-                self.dataframe = pd.read_csv(self.file_path)
+                # Load CSV with dtype mapping if provided
+                if dtype_mapping is None:
+                    dtype_mapping = {
+                        'PADDING': str,
+                        'FIRSTFRAME': str,
+                        'LASTFRAME': str,
+                    }  # Default to an empty dictionary if no mapping is provided
+                self.dataframe = pd.read_csv(self.file_path, dtype=dtype_mapping)
+
+                # Print loaded DataFrame to verify
+                # print("Here's the loaded DataFrame:")
+                # print(self.dataframe.head())
+
                 self.model = EditablePandasModel(self.dataframe, editable=True, parent=self)
                 self.table_view.setModel(self.model)
             else:

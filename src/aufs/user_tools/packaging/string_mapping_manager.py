@@ -1,7 +1,10 @@
+# src/aufs/user_tools/packaging/string_mapping_manager.py
+
 import os
 import sys
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-                               QMessageBox, QLineEdit, QLabel, QFrame, QTextEdit, QFileDialog, QApplication)
+                               QMessageBox, QLineEdit, QLabel, QFrame, QTextEdit, QFileDialog, QApplication, 
+                               QListWidget, QListWidgetItem, QDialog)
 from PySide6.QtCore import Qt
 
 # Add the `src` directory to the Python path
@@ -12,10 +15,47 @@ sys.path.insert(0, src_path)
 from src.aufs.user_tools.deep_editor import DeepEditor  # The CSV editor component
 from src.aufs.user_tools.packaging.string_remapper import StringRemapper  # The remapping logic class
 
+class HeaderSelectionDialog(QDialog):
+    def __init__(self, headers, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Header")
+        self.resize(300, 400)
+        
+        # Layout for the dialog
+        layout = QVBoxLayout(self)
+
+        # List to display headers
+        self.header_list = QListWidget()
+        for header in headers:
+            item = QListWidgetItem(header)
+            self.header_list.addItem(item)
+        
+        # Allow only single selection
+        self.header_list.setSelectionMode(QListWidget.SingleSelection)
+        layout.addWidget(self.header_list)
+
+        # OK and Cancel buttons
+        button_layout = QHBoxLayout()
+        self.ok_button = QPushButton("OK")
+        self.cancel_button = QPushButton("Cancel")
+        button_layout.addWidget(self.ok_button)
+        button_layout.addWidget(self.cancel_button)
+
+        layout.addLayout(button_layout)
+
+        # Connect button signals
+        self.ok_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+
+    def selected_header(self):
+        """Return the selected header or None if no selection is made."""
+        selected_items = self.header_list.selectedItems()
+        return selected_items[0].text() if selected_items else None
+
 class StringMappingManager(QWidget):
     def __init__(self, csv_path=None, parent=None):
         super().__init__(parent)
-        self.csv_path = '/Users/uel/.aufs/config/jobs/active/unit/rr_mumbai/fs_updates/fs_data-unit_rr_mumbai-20241103T062038Z.csv'
+        self.csv_path = '/Users/uel/.aufs/config/jobs/active/unit/rr_mumbai/fs_updates/fs_data-unit_rr_mumbai-20241103T121818Z.csv'
         self.setWindowTitle(f"CSV and Remap Tool: {os.path.basename(self.csv_path) if self.csv_path else 'Untitled'}")
         self.resize(1000, 900)
 
@@ -59,7 +99,7 @@ class StringMappingManager(QWidget):
         self.id_header_input.setText('FILE')
         remap_layout.addWidget(self.id_header_input)
 
-        # Button to show available headers
+        # Show Headers button
         self.show_headers_button = QPushButton("Show Available Headers")
         self.show_headers_button.clicked.connect(self.show_available_headers)
         remap_layout.addWidget(self.show_headers_button)
@@ -90,6 +130,31 @@ class StringMappingManager(QWidget):
         # Add remapping layout to main layout
         self.main_layout.addLayout(remap_layout)
 
+    def show_available_headers(self):
+        """Show available headers in a single-select dialog."""
+        headers = list(self.deep_editor.model.get_dataframe().columns)
+        
+        # Open dialog to select a header
+        dialog = HeaderSelectionDialog(headers, self)
+        if dialog.exec() == QDialog.Accepted:
+            selected_header = dialog.selected_header()
+            self.id_header_input.setText(selected_header)
+            # if selected_header:
+            #     # Check if id_header_input already has text
+            #     if self.id_header_input.text():
+            #         # Ask for confirmation to overwrite
+            #         confirm = QMessageBox.question(
+            #             self,
+            #             "Confirm Overwrite",
+            #             "This will overwrite the current ID Header. Are you sure?",
+            #             QMessageBox.Yes | QMessageBox.No
+            #         )
+            #         if confirm == QMessageBox.No:
+            #             return  # Exit if the user cancels overwrite
+
+            #     # Set the selected header
+            #     self.id_header_input.setText(selected_header)
+                
     def load_csv(self):
         """Load CSV data into DeepEditor without setting mappings in StringRemapper."""
         file_path, _ = QFileDialog.getOpenFileName(self, "Open CSV File", "", "CSV Files (*.csv);;All Files (*)")
@@ -116,14 +181,6 @@ class StringMappingManager(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save CSV: {str(e)}")
 
-    def show_available_headers(self):
-        """Show a popup with available headers from the CSV."""
-        headers = list(self.deep_editor.model.get_dataframe().columns)
-        headers_popup = QMessageBox(self)
-        headers_popup.setWindowTitle("Available Headers")
-        headers_popup.setText("Available Headers:\n" + "\n".join(headers))
-        headers_popup.exec()
-
     def map_values(self):
         """Perform the remap and display results based on user inputs."""
         id_header = self.id_header_input.text().strip()
@@ -144,6 +201,7 @@ class StringMappingManager(QWidget):
 
         # Perform remapping and display results
         try:
+            print(id_header, id_value, target_columns)
             result = self.remapper.remap(id_header, id_value, target_columns)
             self.display_results(result)
         except Exception as e:
@@ -178,6 +236,9 @@ class StringMappingManager(QWidget):
             result_text = "\n".join([f"{col}: {value}" for col, value in results])
             self.results_display.setText(result_text)
 
+    def finalize_logging(self):
+        """Trigger logging of all final versions after remapping."""
+        self.remapper.log_final_versions()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

@@ -540,32 +540,37 @@ def add_hashedfile_column(df, column_name_for_hashing, noHashNonStringFields=Tru
 
 def add_ITEM_columns(df, column_name):
     # Initialize new columns with empty strings
+    df['RAWITEMNAME'] = ''
     df['ITEMNAME'] = ''
     df['ITEMLOCATION'] = ''
     df['ITEMLOCATIONROOT'] = ''
-    print(df)
-    print("COLUMN NAME is: ", column_name)
+    df['REMAPTYPE'] = ''
     
     # Function to parse each row
     def parse_row(value):
         try:
             # Step 1: Replace "\" with "/"
             value = value.replace("\\", "/")
+            value_for_base_item_name = value
+            # print("value for base item name: ", value_for_base_item_name)
             # Step 2: Find and remove all matches for "." followed by any %0d sequence notation, allow for 0-20
             value = re.sub(r'\.%0\d{1,2}d', '', value)  # Adjusted regex to correctly target sequence placeholders
             # Step 3: Split using "/"
             parts = value.split("/")
+            base_parts = value_for_base_item_name.split("/")
             # Steps 4-6: Extract and assign parts to new columns
+            remap_type = 'string'
+            raw_item_name = base_parts[-1] if len(base_parts) > 0 else ''
             item_name = parts[-1] if len(parts) > 0 else ''
             item_location_root = parts[0] if len(parts) > 0 else ''
             item_location = '/'.join(parts[1:-1]) if len(parts) > 2 else ''
-            return item_name, item_location, item_location_root
+            return remap_type, raw_item_name ,item_name, item_location, item_location_root
         except Exception as e:
             # In case of error, return empty strings
             return '', '', ''
 
     # Apply parse_row function to each row in the specified column and assign the results to new columns
-    df[['ITEMNAME', 'ITEMLOCATION', 'ITEMLOCATIONROOT']] = df[column_name].apply(lambda x: parse_row(x)).tolist()
+    df[['REMAPTYPE', 'RAWITEMNAME', 'ITEMNAME', 'ITEMLOCATION', 'ITEMLOCATIONROOT']] = df[column_name].apply(lambda x: parse_row(x)).tolist()
 
     return df
 

@@ -1,3 +1,5 @@
+# src/aufs/user_tools/packaging/string_mapping_requestor.py
+
 import os
 import sys
 import re
@@ -8,7 +10,6 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                                QApplication, QComboBox, QListWidget, QListWidgetItem, QToolButton, QStyle, QTabWidget)
 from PySide6.QtCore import Qt
 
-# Add source directory to path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 src_path = os.path.join(current_dir, '..', '..', '..', '..')
 sys.path.insert(0, src_path)
@@ -20,18 +21,21 @@ class OutputManager:
         self.format_handlers = {
             'csv': self._write_csv,
             'txt': self._write_txt,
-            # Additional formats can be added here
         }
         self.naming_conventions = {
             'original': self._original_name,
             'save_as': self._save_as_name,
             'timestamped': self._timestamped_name,
-            # New conventions can be added here
         }
 
     def save(self, data, file_path, format_type, naming_option):
         # Get the correct file path based on the naming option
         save_path = self.naming_conventions[naming_option](file_path)
+
+        # Check if the save path is empty (indicating cancel)
+        if not save_path:
+            QMessageBox.information(None, "Canceled", "Save operation was canceled.")
+            return
 
         # Call the appropriate format handler method
         if format_type in self.format_handlers:
@@ -46,7 +50,7 @@ class OutputManager:
 
     def _save_as_name(self, file_path):
         save_path, _ = QFileDialog.getSaveFileName(None, "Save As", file_path, "All Files (*)")
-        return save_path if save_path else file_path  # Return chosen path or original if canceled
+        return save_path  # Directly return the selected or empty path (if canceled)
 
     def _timestamped_name(self, file_path):
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -55,14 +59,12 @@ class OutputManager:
 
     # Format-specific writing methods
     def _write_csv(self, data, save_path):
-        if isinstance(data, str):  # Assume string data is newline-separated for CSV
+        if isinstance(data, str):
             pd.DataFrame({'Remapped_Text': data.split("\n")}).to_csv(save_path, index=False)
 
     def _write_txt(self, data, save_path):
         with open(save_path, 'w') as f:
             f.write(data)
-
-    # Additional methods for other formats can be defined here
 
 class FileIO:
     def read(self, file_path):
@@ -96,54 +98,76 @@ class PayloadHandler:
         return pd.DataFrame(processed_chunks) if isinstance(data, pd.DataFrame) else "\n".join(processed_chunks)
 
     def parse(self, chunk, parse_type):
-        return Parsers.extract_uppercase(chunk) if parse_type == "uppercase" else Parsers.extract_paths(chunk)
+        """Route to the appropriate parser based on the parse_type."""
+        if parse_type == "uppercase":
+            return Parsers.extract_uppercase(chunk)
+        elif parse_type == "path":
+            return Parsers.extract_paths(chunk)
+        elif parse_type == "raw_item_name":
+            return Parsers.extract_raw_item_names(chunk)  # New functionality for raw_item_name
+        else:
+            raise ValueError(f"Unknown parse_type: {parse_type}")
 
 class Parsers:
     @staticmethod
-    def extract_uppercase(chunk, delimiters=None):
-        print("CHUNK provided by the PayloadHandler is:")
-        print(chunk)
+    def filter_blacklist_chars(parsed_list, blacklist_chars=None):
+        """Filter out elements from parsed_list that contain any blacklisted character.
         
-        # Default delimiters if none provided
-        delimiters = delimiters or ['-', '_', '.', '/']
-        
-        # Split based on any delimiter, then filter for uppercase matches
-        parts = re.split(f"[{''.join(map(re.escape, delimiters))}]", chunk)
-        
-        # Keep only parts that are fully uppercase or meet specific uppercase conditions
-        parsed_strings = [part for part in parts if part.isupper() and len(part) > 1]
+        If no blacklist_chars list is provided, a default set of characters will be used.
+        """
+        if blacklist_chars is None:
+            blacklist_chars = ['>', '<', '|', ';']  # Default characters
 
-        print("PARSED STRINGS are:", parsed_strings)  # Single debug output
-        return parsed_strings
+        # Filter out items containing any blacklisted character
+        filtered_list = [
+            item for item in parsed_list
+            if not any(char in item for char in blacklist_chars)
+        ]
+        
+        return filtered_list
 
     @staticmethod
-    def extract_paths(chunk):
-        print(chunk)
+    def extract_paths(chunk, blacklist_chars=None):
+        """Extracts potential path strings from the provided chunk and filters them
+        using the blacklist if provided.
+        """
         path_suspects = []
         i = 0
         while i < len(chunk):
-            # Check for / or \ as possible path indicators
             if chunk[i] in ('/', '\\'):
-                # Determine start of path
-                # If there's a Windows drive letter pattern (e.g., "C:"), set the start 2 chars back
                 start = i - 2 if i >= 2 and re.match(r'[A-Za-z]:', chunk[i-2:i]) else i
-                
-                # Search forwards from the current position until a terminating character is found
                 end = i
                 while end < len(chunk) and chunk[end] not in (' ', '\n', '\t', ';', ',', '|'):
                     end += 1
-                
-                # Extract path suspect from 'start' to 'end', excluding the 'out' point (terminator)
                 path_suspect = chunk[start:end]
                 path_suspects.append(path_suspect)
-                
-                # Move the index to the end of the current path to continue scanning
                 i = end
             else:
                 i += 1
+        
+        # Apply blacklist filtering if any suspects were found
+        return Parsers.filter_blacklist_chars(path_suspects, blacklist_chars)
 
-        # First-pass filtering (none for now, just return all suspects)
-        return path_suspects
+    @staticmethod
+    def extract_uppercase(chunk, delimiters=None):
+        # print("CHUNK provided by the PayloadHandler is:", chunk)
+        delimiters = delimiters or ['-', '_', '.', '/', ':', '\\']
+        parts = re.split(f"[{''.join(map(re.escape, delimiters))}]", chunk)
+        parsed_strings = [part for part in parts if part.isupper() and len(part) > 1]
+        # print("PARSED STRINGS are:", parsed_strings)
+        return parsed_strings
+
+    @staticmethod
+    def extract_raw_item_names(chunk):
+        """Extract paths that end with a file extension."""
+        path_suspects = Parsers.extract_paths(chunk)
+        filtered_suspects = [
+            path for path in path_suspects if re.search(r'\.\w+$', path)  # Basic check for file extension
+        ]
+        # print("raw filenames with file extensions:", filtered_suspects)
+        raw_items = [(path, path.split('/')[-1]) for path in filtered_suspects]
+        # print("RAWITEMNAMES are: ", raw_items)
+        return raw_items
 
 class MappingRequestor:
     def __init__(self):
@@ -173,13 +197,13 @@ class RequestorUI(QWidget):
         self.manager_tab = QWidget()
         self.manager_layout = QVBoxLayout(self.manager_tab)
         self.manager_layout.addWidget(self.manager)  # Assuming this is a QWidget
-        self.tabs.addTab(self.manager_tab, "String Mapping Manager")
         
         # === Requestor Tab ===
         self.requestor_tab = QWidget()
         self.requestor_layout = QVBoxLayout(self.requestor_tab)
         self.setup_requestor_ui(self.requestor_layout)
         self.tabs.addTab(self.requestor_tab, "Requestor Interface")
+        self.tabs.addTab(self.manager_tab, "String Mapping Manager")
 
         # Add tabs to main layout
         main_layout = QVBoxLayout(self)
@@ -199,13 +223,23 @@ class RequestorUI(QWidget):
         file_layout.addWidget(self.load_button)
         layout.addLayout(file_layout)
 
-        # === Remap Type ===
+        # In the setup_requestor_ui method
         remap_type_layout = QHBoxLayout()
         self.remap_type_combo = QComboBox()
-        self.remap_type_combo.addItems(["uppercase", "path"])
+
+        # Display names with corresponding parse types in a dictionary
+        self.remap_type_options = {
+            "Uppercase Variables, no curly brackets": "uppercase",
+            "Paths": "path",
+            "Raw Item-names": "raw_item_name"
+        }
+
+        # Populate the combo box with display names
+        self.remap_type_combo.addItems(self.remap_type_options.keys())
         remap_type_layout.addWidget(QLabel("Remap Type:"))
         remap_type_layout.addWidget(self.remap_type_combo)
         layout.addLayout(remap_type_layout)
+
 
         # === Column Selection for CSV ===
         self.column_list_widget = QListWidget()
@@ -248,7 +282,7 @@ class RequestorUI(QWidget):
         layout.addLayout(save_button_layout)
 
     def load_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Open File", "", "CSV Files (*.csv);;Text Files (*.txt);;All Files (*)")
+        file_path, _ = QFileDialog.getOpenFileName(self, "Open File", "", "All Files (*);;Text Files (*.txt);;CSV Files (*.csv)")
         if file_path:
             self.file_path_input.setText(file_path)
             self.file_type = 'csv' if file_path.endswith('.csv') else 'txt'
@@ -279,6 +313,14 @@ class RequestorUI(QWidget):
         id_header = self.manager.id_header_input.text().strip()
         id_value = self.manager.id_value_input.text().strip()
 
+        # Retrieve parse_type using the selected display name
+        displayed_parse_type = self.remap_type_combo.currentText()
+        parse_type = self.remap_type_options.get(displayed_parse_type)
+
+        
+        self.preview_display.clear()
+        remapped_texts = []
+
         # Determine selected columns for remapping in CSV files
         selected_columns = []
         if self.file_type == 'csv':
@@ -289,10 +331,8 @@ class RequestorUI(QWidget):
             if "all-cols" in selected_columns:
                 selected_columns = self.preview_data.columns.tolist()
 
-        # Get remap type from the combo box to select the appropriate parser
-        parse_type = self.remap_type_combo.currentText().lower()  # "uppercase" or "path"
-        self.preview_display.clear()
-        remapped_texts = []
+        # Set a flag for handling raw filenames
+        is_raw_item_name = (parse_type == "raw_item_name")
 
         # Process each chunk using PayloadHandler
         for chunk in self.payload_handler.chunk_data(self.preview_data, selected_columns):
@@ -302,16 +342,33 @@ class RequestorUI(QWidget):
             # Initialize remapped chunk to be modified in place
             remapped_chunk = chunk
 
-            # Retrieve mappings for each parsed string from manager
-            if parsed_strings:
-                mappings = self.manager.map_requested_values(id_header, id_value, parsed_strings)
+            if is_raw_item_name:
+                # For raw_item_name, use (path_suspect, to_find) tuples for mapping
+                for path_suspect, to_find in parsed_strings:
+                    # Perform mapping with custom ID header, value, and target for raw_item_name
+                    print(path_suspect)
+                    mappings = self.manager.map_requested_values("RAWITEMNAME", to_find, ["FILE"]) or []
+                    print("rawitemname mappings ARE: ", mappings)
 
-                # Filter out mappings where the replacement value is not a non-empty string
-                valid_mappings = [(existing_value, replacement_value) 
-                                for existing_value, replacement_value in mappings 
-                                if isinstance(replacement_value, str) and replacement_value.strip()]
+                    # Filter mappings for valid (non-empty) replacement values
+                    valid_mappings = [
+                        (existing_value, replacement_value) for existing_value, replacement_value in mappings
+                        if isinstance(replacement_value, str) and replacement_value.strip()
+                    ]
+
+                    # Replace path_suspect in remapped_chunk with the replacement value
+                    for existing_value, replacement_value in valid_mappings:
+                        remapped_chunk = remapped_chunk.replace(path_suspect, replacement_value)
+
+            else:
+                # For other parse types ("uppercase", "path"), continue as before
+                mappings = self.manager.map_requested_values(id_header, id_value, parsed_strings) or []
 
                 # Apply valid mappings to the chunk
+                valid_mappings = [
+                    (existing_value, replacement_value) for existing_value, replacement_value in mappings
+                    if isinstance(replacement_value, str) and replacement_value.strip()
+                ]
                 for existing_value, replacement_value in valid_mappings:
                     remapped_chunk = remapped_chunk.replace(existing_value, replacement_value)
 
@@ -326,9 +383,12 @@ class RequestorUI(QWidget):
         file_path = self.file_path_input.text()
         format_type = 'csv' if file_path.endswith('.csv') else 'txt'
         remapped_data = self.preview_display.toPlainText()
-        
+
         # Call OutputManager to handle the save operation
         self.output_manager.save(remapped_data, file_path, format_type, save_option)
+        
+        # Trigger final version logging in StringMappingManager
+        self.manager.finalize_logging()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

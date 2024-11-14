@@ -84,6 +84,8 @@ def seqs_tidyup_v2(df):
     final_processed['LASTFRAME'] = final_processed['SEQUENCEPOSITION'].apply(lambda x: str(x[-1]) if x else '')
     final_processed['FRAMERANGE'] = final_processed['SEQUENCEPOSITION'].apply(lambda x: format_ranges(x) if x else '')
 
+    
+
     # Calculate the missing frames
     final_processed['MISSINGFRAMES'] = final_processed['SEQUENCEPOSITION'].apply(lambda x: calculate_missing_frames(x) if x else '')
     

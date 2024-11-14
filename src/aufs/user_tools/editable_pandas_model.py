@@ -1,6 +1,6 @@
 import pandas as pd
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QMessageBox, QComboBox
 import uuid  # To generate UUIDs
 
 class EditablePandasModel(QAbstractTableModel):

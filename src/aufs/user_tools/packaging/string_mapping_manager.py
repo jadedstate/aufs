@@ -3,9 +3,10 @@
 import os
 import sys
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-                               QMessageBox, QLineEdit, QLabel, QFrame, QTextEdit, QFileDialog, QApplication, 
-                               QListWidget, QListWidgetItem, QDialog)
+                               QMessageBox, QComboBox, QLabel, QFrame, QTextEdit, QFileDialog, QApplication, 
+                               QListWidget, QListWidgetItem, QDialog, QCheckBox)
 from PySide6.QtCore import Qt
+import pandas as pd
 
 # Add the `src` directory to the Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -15,75 +16,25 @@ sys.path.insert(0, src_path)
 from src.aufs.user_tools.deep_editor import DeepEditor  # The CSV editor component
 from src.aufs.user_tools.packaging.string_remapper import StringRemapper  # The remapping logic class
 
-class HeaderSelectionDialog(QDialog):
-    def __init__(self, headers, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Select Header")
-        self.resize(300, 400)
-        
-        # Layout for the dialog
-        layout = QVBoxLayout(self)
-
-        # List to display headers
-        self.header_list = QListWidget()
-        for header in headers:
-            item = QListWidgetItem(header)
-            self.header_list.addItem(item)
-        
-        # Allow only single selection
-        self.header_list.setSelectionMode(QListWidget.SingleSelection)
-        layout.addWidget(self.header_list)
-
-        # OK and Cancel buttons
-        button_layout = QHBoxLayout()
-        self.ok_button = QPushButton("OK")
-        self.cancel_button = QPushButton("Cancel")
-        button_layout.addWidget(self.ok_button)
-        button_layout.addWidget(self.cancel_button)
-
-        layout.addLayout(button_layout)
-
-        # Connect button signals
-        self.ok_button.clicked.connect(self.accept)
-        self.cancel_button.clicked.connect(self.reject)
-
-    def selected_header(self):
-        """Return the selected header or None if no selection is made."""
-        selected_items = self.header_list.selectedItems()
-        return selected_items[0].text() if selected_items else None
-
 class StringMappingManager(QWidget):
     def __init__(self, csv_path=None, parent=None):
         super().__init__(parent)
-        self.csv_path = '/Users/uel/.aufs/config/jobs/active/unit/rr_mumbai/fs_updates/fs_data-unit_rr_mumbai-20241103T121818Z.csv'
+        self.csv_path = csv_path
         self.setWindowTitle(f"CSV and Remap Tool: {os.path.basename(self.csv_path) if self.csv_path else 'Untitled'}")
         self.resize(1000, 900)
 
-        # Initialize the remapper instance without the DataFrame (we’ll set it after loading CSV)
-        self.remapper = StringRemapper()
-
+        self.selected_rows_df = pd.DataFrame()  # Store selected rows
+        self.remapper = StringRemapper()  # Remapper instance
+        self.button_flags = {'save': False, 'exit': False, 'add_row': False, 'delete_row': False, 'move_row_up': False, 'move_row_down': False}
+        
         # Main layout
         self.main_layout = QVBoxLayout(self)
 
-        # === CSV Editing Section ===
-        # Initialize DeepEditor for CSV editing
-        self.button_flags = {'save': False, 'exit': False}
+        # === CSV Editor ===
         self.deep_editor = DeepEditor(file_path=self.csv_path, button_flags=self.button_flags, file_type='csv', parent=self)
-
-        # Button layout for CSV controls
-        csv_button_layout = QHBoxLayout()
-        self.load_button = QPushButton("Load CSV")
-        self.save_button = QPushButton("Save CSV")
-        self.load_button.clicked.connect(self.load_csv)
-        self.save_button.clicked.connect(self.save_csv)
-        csv_button_layout.addWidget(self.load_button)
-        csv_button_layout.addWidget(self.save_button)
-
-        # Add CSV editor and buttons to layout
-        self.main_layout.addLayout(csv_button_layout)
         self.main_layout.addWidget(self.deep_editor)
 
-        # Separator line
+        # Separator
         separator = QFrame()
         separator.setFrameShape(QFrame.HLine)
         separator.setFrameShadow(QFrame.Sunken)
@@ -91,84 +42,191 @@ class StringMappingManager(QWidget):
 
         # === Remapping Section ===
         remap_layout = QVBoxLayout()
-        remap_layout.addWidget(QLabel("Remap Values"))
+        
+        # Header selection dropdown
+        remap_layout.addWidget(QLabel("Choose ID Header:"))
+        self.id_header_dropdown = QComboBox()
+        self.id_header_dropdown.currentIndexChanged.connect(self.populate_id_value_list)
+        remap_layout.addWidget(self.id_header_dropdown)
 
-        # ID Header input
-        remap_layout.addWidget(QLabel("Enter ID Header:"))
-        self.id_header_input = QLineEdit()
-        self.id_header_input.setText('FILE')
-        remap_layout.addWidget(self.id_header_input)
+        # ID value list
+        remap_layout.addWidget(QLabel("Select ID Value(s):"))
+        self.id_value_list = QListWidget()
+        self.id_value_list.setSelectionMode(QListWidget.MultiSelection)
+        remap_layout.addWidget(self.id_value_list)
 
-        # Show Headers button
-        self.show_headers_button = QPushButton("Show Available Headers")
-        self.show_headers_button.clicked.connect(self.show_available_headers)
-        remap_layout.addWidget(self.show_headers_button)
+        # Select All / None Toggle
+        toggle_layout = QHBoxLayout()
+        self.select_all_toggle = QCheckBox("Select All/None")
+        self.select_all_toggle.stateChanged.connect(self.toggle_all_id_values)
+        toggle_layout.addWidget(self.select_all_toggle)
 
-        # ID Value input
-        remap_layout.addWidget(QLabel("Enter ID Value:"))
-        self.id_value_input = QLineEdit()
-        self.id_value_input.setText('/Volumes/ofs-wasabi-london-01/jobs/unit/rr_mumbai/light/40S_090/images/40S_090_v030/BTy/sheen/40S_090_sheen_v030_lgroups.%04d.exr')
-        remap_layout.addWidget(self.id_value_input)
+        # "Set Selection" Button
+        self.set_selection_button = QPushButton("Set Selection")
+        self.set_selection_button.clicked.connect(self.set_selection)
+        toggle_layout.addWidget(self.set_selection_button)
+        remap_layout.addLayout(toggle_layout)
 
-        # Target Columns input (comma-separated list)
-        remap_layout.addWidget(QLabel("Enter Target Columns to Remap (comma-separated):"))
-        self.target_columns_input = QLineEdit()
-        self.target_columns_input.setText('STATUS, SEQUENCENAME')
-        remap_layout.addWidget(self.target_columns_input)
-
-        # Map Values button
-        self.map_button = QPushButton("Map Values")
-        self.map_button.clicked.connect(self.map_values)
-        remap_layout.addWidget(self.map_button)
-
-        # Results display area
+        # Results display pane (also used to show selected_rows_df)
         self.results_display = QTextEdit()
         self.results_display.setReadOnly(True)
-        remap_layout.addWidget(QLabel("Mapping Results:"))
         remap_layout.addWidget(self.results_display)
+
+        # "Delete DF Data" Button
+        self.delete_df_button = QPushButton("Delete DF Data")
+        self.delete_df_button.clicked.connect(self.clear_selected_data)
+        remap_layout.addWidget(self.delete_df_button)
 
         # Add remapping layout to main layout
         self.main_layout.addLayout(remap_layout)
 
-    def show_available_headers(self):
-        """Show available headers in a single-select dialog."""
-        headers = list(self.deep_editor.model.get_dataframe().columns)
-        
-        # Open dialog to select a header
-        dialog = HeaderSelectionDialog(headers, self)
-        if dialog.exec() == QDialog.Accepted:
-            selected_header = dialog.selected_header()
-            self.id_header_input.setText(selected_header)
-            # if selected_header:
-            #     # Check if id_header_input already has text
-            #     if self.id_header_input.text():
-            #         # Ask for confirmation to overwrite
-            #         confirm = QMessageBox.question(
-            #             self,
-            #             "Confirm Overwrite",
-            #             "This will overwrite the current ID Header. Are you sure?",
-            #             QMessageBox.Yes | QMessageBox.No
-            #         )
-            #         if confirm == QMessageBox.No:
-            #             return  # Exit if the user cancels overwrite
+        # Load headers if a CSV is provided
+        if self.csv_path:
+            self.load_csv()
 
-            #     # Set the selected header
-            #     self.id_header_input.setText(selected_header)
-                
+    def initialize_manager_with_csv(self, csv_path):
+        """Reinitialize the manager with a new CSV file."""
+        if not os.path.exists(csv_path):
+            QMessageBox.warning(self, "File Error", "The specified CSV file does not exist.")
+            return
+
+        self.csv_path = csv_path  # Update the path for the manager
+        try:
+            # Reload the DeepEditor with the new file
+            self.deep_editor.file_path = self.csv_path
+            self.deep_editor.load_file()
+
+            # Reset the headers and ID selection components
+            self.id_header_dropdown.clear()
+            self.id_value_list.clear()
+            self.select_all_toggle.setChecked(False)
+            self.load_headers()
+
+            # Clear results display
+            self.results_display.clear()
+
+            QMessageBox.information(self, "Load Successful", "Files loaded successfully.")
+        except Exception as e:
+            QMessageBox.critical(self, "Load Error", f"Failed to load the CSV file: {str(e)}")
+            
     def load_csv(self):
-        """Load CSV data into DeepEditor without setting mappings in StringRemapper."""
-        file_path, _ = QFileDialog.getOpenFileName(self, "Open CSV File", "", "CSV Files (*.csv);;All Files (*)")
-        if file_path:
-            self.csv_path = file_path  # Update self.csv_path with the selected file
-            try:
-                self.deep_editor.file_path = self.csv_path  # Update DeepEditor with the new file path
-                self.deep_editor.load_file()  # Load the CSV file in DeepEditor
+        """Load CSV data into the DeepEditor."""
+        try:
+            self.deep_editor.file_path = self.csv_path
+            self.deep_editor.load_file()
+            self.load_headers()
+            QMessageBox.information(self, "Load Successful", "CSV file loaded successfully.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load CSV: {str(e)}")
 
-                QMessageBox.information(self, "Load Successful", "CSV file loaded successfully.")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to load CSV: {str(e)}")
+    def load_headers(self):
+        """Load headers into the ID header dropdown."""
+        try:
+            dataframe = self.deep_editor.model.get_dataframe()
+            if dataframe is not None:
+                headers = list(dataframe.columns)
+                self.id_header_dropdown.addItems(headers)
+        except AttributeError:
+            QMessageBox.critical(self, "Error", "Failed to load headers from the CSV file.")
+
+    def toggle_all_id_values(self):
+        """Select or deselect all ID values."""
+        toggle_checked = self.select_all_toggle.isChecked()
+        for index in range(self.id_value_list.count()):
+            item = self.id_value_list.item(index)
+            item.setSelected(toggle_checked)
+
+    def populate_id_value_list(self):
+        """Populate ID values based on the selected header."""
+        self.id_value_list.clear()
+        selected_header = self.id_header_dropdown.currentText()
+
+        try:
+            dataframe = self.deep_editor.model.get_dataframe()
+            if dataframe is not None and selected_header:
+                unique_values = dataframe[selected_header].dropna().unique()
+                for value in unique_values:
+                    self.id_value_list.addItem(QListWidgetItem(str(value)))
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to populate ID values: {str(e)}")
+
+    def set_selection(self):
+        """Set selected rows into `selected_rows_df`."""
+        try:
+            dataframe = self.deep_editor.model.get_dataframe()
+            selected_values = self.get_selected_id_values()
+            selected_header = self.id_header_dropdown.currentText()
+
+            if dataframe is not None and selected_header and selected_values:
+                # Filter DataFrame by selected values
+                self.selected_rows_df = dataframe[dataframe[selected_header].isin(selected_values)].copy()
+                self.display_selected_data()
+            else:
+                QMessageBox.warning(self, "Selection Error", "Ensure a header and values are selected.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to set selection: {str(e)}")
+
+    def get_selected_id_values(self):
+        """Retrieve selected ID values."""
+        return [item.text() for item in self.id_value_list.selectedItems()]
+
+    def display_selected_data(self):
+        """Display the current selected_rows_df in the results pane."""
+        if self.selected_rows_df.empty:
+            self.results_display.setText("No data selected.")
         else:
-            QMessageBox.information(self, "No File Selected", "No file was selected for loading.")
+            self.results_display.setText(self.selected_rows_df.to_string(index=False))
+
+    def clear_selected_data(self):
+        """Clear selected rows DataFrame."""
+        self.selected_rows_df = pd.DataFrame()
+        self.results_display.setText("Selected rows cleared.")
+
+    def display_results(self, results):
+        """Display the remapping results in the text area."""
+        if not results:
+            self.results_display.setText("No mapping found for the given inputs.")
+        else:
+            result_text = "\n".join([f"{col}: {value}" for col, value in results])
+            self.results_display.setText(result_text)
+
+    def map_requested_values(self, id_header, id_value, target_columns, row_data=None, remap_type='string'):
+        """
+        Perform remapping with optional row_data and remap_type arguments.
+
+        Parameters:
+        - id_header (str): The column header to match.
+        - id_value (str): The ID value to find in the specified header column.
+        - target_columns (list): List of columns to remap.
+        - row_data (pd.Series): Optional row data to pass directly to the remapper.
+        - remap_type (str): Optional remap type to specify how remapping is handled.
+
+        Returns:
+        - list: Result of the remapping operation.
+        """
+        if not id_header or not id_value or not target_columns:
+            QMessageBox.warning(self, "Input Error", "Please fill in all fields.")
+            return
+
+        # Fetch the latest mappings DataFrame from DeepEditor and set it in StringRemapper
+        mappings_df = self.deep_editor.model.get_dataframe()
+        if mappings_df is not None:
+            self.remapper.set_mappings(mappings_df)
+        else:
+            QMessageBox.critical(self, "Error", "Failed to retrieve mappings DataFrame.")
+            return
+
+        # Perform remapping and display results
+        try:
+            result = self.remapper.remap(id_header, id_value, target_columns, row_data=row_data, remap_type=remap_type)
+            self.display_results(result)
+            return result
+        except Exception as e:
+            QMessageBox.critical(self, "Remap Error", f"Failed to remap values: {str(e)}")
+
+    def finalize_logging(self):
+        """Trigger logging of all final versions after remapping."""
+        self.remapper.log_final_versions()
 
     def save_csv(self):
         """Save CSV data from DeepEditor."""
@@ -180,65 +238,6 @@ class StringMappingManager(QWidget):
             QMessageBox.information(self, "Save Successful", "CSV file saved successfully.")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save CSV: {str(e)}")
-
-    def map_values(self):
-        """Perform the remap and display results based on user inputs."""
-        id_header = self.id_header_input.text().strip()
-        id_value = self.id_value_input.text().strip()
-        target_columns = [col.strip() for col in self.target_columns_input.text().split(",")]
-
-        if not id_header or not id_value or not target_columns:
-            QMessageBox.warning(self, "Input Error", "Please fill in all fields.")
-            return
-
-        # Fetch the latest mappings DataFrame from DeepEditor and set it in StringRemapper
-        mappings_df = self.deep_editor.model.get_dataframe()
-        if mappings_df is not None:
-            self.remapper.set_mappings(mappings_df)
-        else:
-            QMessageBox.critical(self, "Error", "Failed to retrieve mappings DataFrame.")
-            return
-
-        # Perform remapping and display results
-        try:
-            print(id_header, id_value, target_columns)
-            result = self.remapper.remap(id_header, id_value, target_columns)
-            self.display_results(result)
-        except Exception as e:
-            QMessageBox.critical(self, "Remap Error", f"Failed to remap values: {str(e)}")
-
-    def map_requested_values(self, id_header, id_value, target_columns):
-        if not id_header or not id_value or not target_columns:
-            QMessageBox.warning(self, "Input Error", "Please fill in all fields.")
-            return
-
-        # Fetch the latest mappings DataFrame from DeepEditor and set it in StringRemapper
-        mappings_df = self.deep_editor.model.get_dataframe()
-        if mappings_df is not None:
-            self.remapper.set_mappings(mappings_df)
-        else:
-            QMessageBox.critical(self, "Error", "Failed to retrieve mappings DataFrame.")
-            return
-
-        # Perform remapping and display results
-        try:
-            result = self.remapper.remap(id_header, id_value, target_columns)
-            self.display_results(result)
-            return result
-        except Exception as e:
-            QMessageBox.critical(self, "Remap Error", f"Failed to remap values: {str(e)}")
-
-    def display_results(self, results):
-        """Display the remapping results in the text area."""
-        if not results:
-            self.results_display.setText("No mapping found for the given inputs.")
-        else:
-            result_text = "\n".join([f"{col}: {value}" for col, value in results])
-            self.results_display.setText(result_text)
-
-    def finalize_logging(self):
-        """Trigger logging of all final versions after remapping."""
-        self.remapper.log_final_versions()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

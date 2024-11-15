@@ -22,8 +22,8 @@ class StringRemapper:
         """
         self.mappings_df = mappings_df
         self.version_controller = None
-        self.root_path = '/Users/uel/.aufs/config/jobs/active/unit/rr_mumbai/packaging'
-        self.recipient = 'amolesh'
+        self.root_path = root_path # '/Users/uel/.aufs/config/jobs/active/unit/rr_mumbai/packaging'
+        self.recipient = recipient # 'amolesh'
         self.user = user or "system"
         self.working_versions = {}
 
@@ -55,22 +55,34 @@ class StringRemapper:
             working_versions=self.working_versions
         )
 
-    def remap(self, id_column, id_value, target_columns):
+    def remap(self, id_column=None, id_value=None, target_columns=None, row_data=None, remap_type=None):
         """
-        Perform the remapping process and keep track of versions for specified columns.
-        """
-        if self.mappings_df is None:
-            raise ValueError("Mappings DataFrame is not set. Load a CSV file to initialize mappings.")
+        Perform the remapping process, supporting direct row_data input.
         
-        # Locate the row based on ID column and ID value
-        row = self.mappings_df[self.mappings_df[id_column] == id_value]
-        if row.empty:
-            return []  # Return an empty list if no match is found
+        Parameters:
+        - id_column (str): Column to locate the row if using mappings_df.
+        - id_value (str): Value in the id_column to locate the row if using mappings_df.
+        - target_columns (list): List of columns to remap.
+        - row_data (pd.Series, optional): Directly supplied row data for remapping.
+        - remap_type (str, optional): Explicit remap type.
+        
+        Returns:
+        - list of tuples: [(column, remapped_value), ...].
+        """
+        if row_data is not None:
+            self.row_data = row_data
+        elif id_column and id_value and self.mappings_df is not None:
+            # Locate the row based on ID column and ID value
+            row = self.mappings_df[self.mappings_df[id_column] == id_value]
+            if row.empty:
+                return []  # Return an empty list if no match is found
+            self.row_data = row.iloc[0]
+        else:
+            raise ValueError("Either row_data or a valid id_column and id_value must be provided.")
 
-        row_data = row.iloc[0]
-        self.row_data = row_data
-        remap_type = row_data.get('REMAPTYPE', 'string')
-        original_filename = os.path.basename(id_value)
+        # Set remap type if provided
+        self.remap_type = remap_type or self.row_data.get('REMAPTYPE', 'string')
+        original_filename = os.path.basename(id_value) if id_value else None
 
         result = []
         for col in target_columns:
@@ -79,19 +91,19 @@ class StringRemapper:
                 value = self._handle_virtual_column(col, id_value)
             else:
                 # Regular columns
-                value = row_data.get(col, "")
+                value = self.row_data.get(col, "")
                 if isinstance(value, str) and value.strip():
                     if col == "PADDING":
-                        value = self._format_padding(value, row_data.get("PADDING_STYLE", "standard"))
+                        value = self._format_padding(value, self.row_data.get("PADDING_STYLE", "standard"))
                     elif col == "DOTEXTENSION":
-                        value = self._adjust_dotextension(value, row_data.get("EXT_CASE", "default"))
-                    elif remap_type.endswith("-findfile-rec"):
+                        value = self._adjust_dotextension(value, self.row_data.get("EXT_CASE", "default"))
+                    elif self.remap_type.endswith("-findfile-rec"):
                         value = self._find_file(value, original_filename, recursive=True)
-                    elif remap_type.endswith("-findfile-norec"):
+                    elif self.remap_type.endswith("-findfile-norec"):
                         value = self._find_file(value, original_filename, recursive=False)
 
             result.append((col, value))
-        
+
         # Log versions once remapping is complete
         # self._log_final_versions()
         return result

@@ -46,6 +46,7 @@ class StringRemapper:
         - v_format (str): Prefix format ('v', 'V', or 'no').
         - padding (int): Number padding for version numbers.
         """
+        # print("Boo from the version controller initializer....")
         self.version_controller = VersionController(
             root_path=self.root_path, 
             recipient=self.recipient, 
@@ -55,63 +56,80 @@ class StringRemapper:
             working_versions=self.working_versions
         )
 
-    def remap(self, id_column=None, id_value=None, target_columns=None, row_data=None, remap_type=None):
+    def _is_valid_value(self, value):
+        """Check if a value is valid."""
+        if value is None:
+            return False
+        if isinstance(value, float) and pd.isna(value):  # Handle NaN for float
+            return False
+        if isinstance(value, str) and not value.strip():  # Empty or whitespace-only strings
+            return False
+        return True  # Assume all other cases are valid
+
+    def remap(self, id_column=None, id_value=None, target_columns=None, row_data=None, remap_type=None, ignore_columns=None):
         """
         Perform the remapping process, supporting direct row_data input.
-        
-        Parameters:
-        - id_column (str): Column to locate the row if using mappings_df.
-        - id_value (str): Value in the id_column to locate the row if using mappings_df.
-        - target_columns (list): List of columns to remap.
-        - row_data (pd.Series, optional): Directly supplied row data for remapping.
-        - remap_type (str, optional): Explicit remap type.
-        
-        Returns:
-        - list of tuples: [(column, remapped_value), ...].
         """
+        ignore_columns = ignore_columns or []
+
         if row_data is not None:
-            self.row_data = row_data
+            self.row_data = row_data.iloc[0]  # Convert to Series for easier access
         elif id_column and id_value and self.mappings_df is not None:
-            # Locate the row based on ID column and ID value
             row = self.mappings_df[self.mappings_df[id_column] == id_value]
             if row.empty:
-                return []  # Return an empty list if no match is found
+                return {}  # No match found; return empty dictionary
             self.row_data = row.iloc[0]
         else:
             raise ValueError("Either row_data or a valid id_column and id_value must be provided.")
 
-        # Set remap type if provided
+        # Set remap type
         self.remap_type = remap_type or self.row_data.get('REMAPTYPE', 'string')
-        original_filename = os.path.basename(id_value) if id_value else None
+        result = {}  # Initialize as a dictionary
 
-        result = []
         for col in target_columns:
+            if col in ignore_columns:
+                continue
+
             # Handle virtual columns
             if col in ["VERSION", "YYYYMMDD", "PKGVERSION3PADDED"]:
-                value = self._handle_virtual_column(col, id_value)
+                if row_data is not None:
+                    value = self._handle_virtual_column(col, row_data=self.row_data)
+                else:
+                    value = self._handle_virtual_column(col, id_value=id_value)
             else:
                 # Regular columns
-                value = self.row_data.get(col, "")
-                if isinstance(value, str) and value.strip():
-                    if col == "PADDING":
-                        value = self._format_padding(value, self.row_data.get("PADDING_STYLE", "standard"))
-                    elif col == "DOTEXTENSION":
-                        value = self._adjust_dotextension(value, self.row_data.get("EXT_CASE", "default"))
-                    elif self.remap_type.endswith("-findfile-rec"):
-                        value = self._find_file(value, original_filename, recursive=True)
-                    elif self.remap_type.endswith("-findfile-norec"):
-                        value = self._find_file(value, original_filename, recursive=False)
+                if col in self.row_data:
+                    value = self.row_data[col]
+                    if isinstance(value, str) and value.strip():  # Check for valid non-empty strings
+                        if col == "PADDING":
+                            value = self._format_padding(value, self.row_data.get("PADDING_STYLE", "standard"))
+                        elif col == "DOTEXTENSION":
+                            value = self._adjust_dotextension(value, self.row_data.get("EXT_CASE", "default"))
+                        elif self.remap_type.endswith("-findfile-rec"):
+                            value = self._find_file(value, None, recursive=True)
+                        elif self.remap_type.endswith("-findfile-norec"):
+                            value = self._find_file(value, None, recursive=False)
+                    else:
+                        continue  # Skip invalid or empty values
+                else:
+                    continue  # Skip missing columns
 
-            result.append((col, value))
+            # Add valid mappings to the result dictionary
+            if value:  # Ensure value is not None or empty
+                result[col] = value
 
-        # Log versions once remapping is complete
-        # self._log_final_versions()
         return result
 
-    def _handle_virtual_column(self, col, item):
+    def _handle_virtual_column(self, col, id_value=None, row_data=None):
         """Handles virtual columns that require versioning or date formatting."""
+        # print("BooOOO from virtual columns handler, here is the row_data for reference: ")
+        # print(row_data)
         if col == "VERSION" and self.version_controller:
-            item = self.row_data.get('PARENTITEM')
+            # Use PARENTITEM from row_data if available, otherwise fall back to id_value
+            item = row_data.get("PARENTITEM") if row_data is not None else None
+            if not item and id_value:
+                item = os.path.basename(id_value)
+
             self.initialize_version_controller(v_format="v", padding=4)
             version, self.working_versions = self.version_controller.retrieve_working_version(item)
             return version
@@ -120,6 +138,7 @@ class StringRemapper:
             return datetime.utcnow().strftime('%Y%m%d')
 
         elif col == "PKGVERSION3PADDED":
+            # Use a special item name when row_data is available
             item = "YYYYMMDD_PKGVERSION3PADDED"
             self.initialize_version_controller(v_format="no", padding=3)
             version, self.working_versions = self.version_controller.retrieve_working_version(item)

@@ -540,6 +540,7 @@ def add_hashedfile_column(df, column_name_for_hashing, noHashNonStringFields=Tru
 
 def add_ITEM_columns(df, column_name):
     # Initialize new columns with empty strings
+    df['PARENTITEM'] = ''
     df['RAWITEMNAME'] = ''
     df['ITEMNAME'] = ''
     df['ITEMLOCATION'] = ''

@@ -1,15 +1,21 @@
 # src/aufs/user_tools/fs_meta/fs_info_from_paths.py
 
 import os
+import sys
 import time
 import pandas as pd
-from .parquet_get_fs_data_for_source import FileSystemScraper
-from .add_jobs_info import source_add_client_project, add_shot_names_to_df, add_shot_names_to_df_using_altshotnames
-from .parquet_tools import sequenceWork
-from .dataframe_meta_work import (add_file_extension_column, format_file_size, add_ITEM_columns,
-                                  add_strippeditemnames_itemversions, add_hashedfile_entrytime_columns_noRoot)
-from .sequences import seqs_tidyup_v2
-from .dataframe_maintenance import no_nans_floats, remove_rows_with_values, to_strings_then_conform_slashes
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_path = os.path.join(current_dir, '..', '..', '..')
+sys.path.insert(0, src_path)
+
+from src.aufs.user_tools.fs_meta.parquet_get_fs_data_for_source import FileSystemScraper
+from src.aufs.user_tools.fs_meta.add_jobs_info import source_add_client_project, add_shot_names_to_df, add_shot_names_to_df_using_altshotnames
+from src.aufs.user_tools.fs_meta.parquet_tools import sequenceWork
+from src.aufs.user_tools.fs_meta.dataframe_meta_work import (add_file_extension_column, format_file_size, add_ITEM_columns, 
+                                                             add_strippeditemnames_itemversions, add_hashedfile_entrytime_columns_noRoot)
+from src.aufs.user_tools.fs_meta.sequences import seqs_tidyup_v2
+from src.aufs.user_tools.fs_meta.dataframe_maintenance import no_nans_floats, remove_rows_with_values, to_strings_then_conform_slashes
 
 
 def file_details_df_from_path(paths, client, project, shots_df, output_csv, use_direct_process=False):

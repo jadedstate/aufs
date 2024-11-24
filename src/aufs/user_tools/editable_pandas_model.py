@@ -1,16 +1,92 @@
 import pandas as pd
-from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex
-from PySide6.QtWidgets import QMessageBox, QComboBox
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QMimeData
+from PySide6.QtWidgets import QMessageBox, QComboBox, QTableView, QMenu, QAbstractItemView
 import uuid  # To generate UUIDs
 
 class EditablePandasModel(QAbstractTableModel):
-    VALID_DTYPES = ["int64", "float64", "object", "bool", "datetime64[ns]"]
+    VALID_DTYPES = ["int64", "float64", "object", "bool", "datetime64[ns]"]  # Re-added
 
-    def __init__(self, dataframe: pd.DataFrame, value_options=None, editable=True, parent=None):
+    def __init__(self, dataframe: pd.DataFrame, value_options=None, editable=True, parent=None, auto_fit_columns=False):
         super().__init__(parent)
         self._dataframe = dataframe if dataframe is not None else pd.DataFrame()
         self._editable = editable
         self.value_options = value_options if value_options is not None else {}
+        self.auto_fit_columns = auto_fit_columns  # New flag for optional column auto-sizing
+        
+        # Precompute column widths only if auto_fit_columns is enabled
+        if self.auto_fit_columns:
+            self.column_widths = self.get_column_widths()
+        else:
+            self.column_widths = {}
+
+    def get_column_widths(self):
+        """Calculate and return optimal column widths only if auto_fit_columns is True."""
+        if not self.auto_fit_columns:  # Guard clause for backward compatibility
+            return {}
+
+        column_widths = {}
+        if not self._dataframe.empty:
+            for column in range(self.columnCount()):
+                # Calculate maximum content width
+                content_width = max(
+                    len(str(self._dataframe.iloc[row, column])) for row in range(self.rowCount())
+                )
+                # Include header width
+                header_width = len(str(self._dataframe.columns[column]))
+                # Determine the optimal width with padding
+                optimal_width = max(content_width, header_width) * 8 + 0  # Scale and add padding
+                column_widths[column] = optimal_width
+        return column_widths
+
+    def adjust_column_widths(self):
+        """Recalculate column widths if auto_fit_columns is enabled."""
+        if self.auto_fit_columns:
+            self.column_widths = self.get_column_widths()
+
+    def setData(self, index, value, role=Qt.EditRole):
+        if not index.isValid() or role != Qt.EditRole:
+            return False
+
+        row = index.row()
+        column = self._dataframe.columns[index.column()]
+
+        # print(f"[setData] Attempting to update cell at row {row}, column '{column}' with value '{value}'")
+
+        self._dataframe.iloc[row, index.column()] = value  # Keep the original logic
+
+        # Debug current state of the DataFrame
+        # print(f"[setData] DataFrame after update:\n{self._dataframe}")
+
+        # Notify views that data has changed
+        self.dataChanged.emit(index, index, [role])
+        return True
+
+    def update_dataframe(self, new_dataframe: pd.DataFrame, view=None):
+        """Updates the DataFrame and refreshes the model."""
+        self.beginResetModel()
+        self._dataframe = new_dataframe
+        self.endResetModel()
+
+        # Ensure column widths are recalculated and applied
+        if view and isinstance(view, QTableView):
+            self.apply_column_widths(view)
+
+    def apply_column_widths(self, view):
+        """
+        Applies calculated column widths to the given QTableView if auto-fit is enabled.
+        """
+        if not self.auto_fit_columns:
+            print("Auto-fit columns is disabled.")
+            return
+
+        if not view:
+            print("Warning: No view provided for column resizing.")
+            return
+
+        column_widths = self.get_column_widths()
+        for column, width in column_widths.items():
+            # print(f"Setting column {column} width to {width}.")
+            view.setColumnWidth(column, width)
 
     def rowCount(self, parent=QModelIndex()):
         return len(self._dataframe) if not parent.isValid() and not self._dataframe.empty else 0
@@ -42,37 +118,10 @@ class EditablePandasModel(QAbstractTableModel):
                 return str(section)
         return None
 
-    def setData(self, index, value, role=Qt.EditRole):
-        if not index.isValid() or role != Qt.EditRole or not self._editable:
-            return False
-
-        row = index.row()
-        col = index.column()
-
-        try:
-            dtype = self._dataframe.dtypes[col]
-            if dtype != object:
-                value = dtype.type(value)
-
-            self._dataframe.iloc[row, col] = value
-            self.dataChanged.emit(index, index, [role])
-            return True
-        except (ValueError, TypeError) as e:
-            print(f"Error updating data at ({row}, {col}): {e}")
-            return False
-
-    def update_dataframe(self, new_dataframe: pd.DataFrame):
-        """Updates the DataFrame and refreshes the model."""
-        self.beginResetModel()
-        self._dataframe = new_dataframe
-        self.endResetModel()
-
     def get_dataframe(self):
         """Returns the current DataFrame being edited."""
         return self._dataframe
 
-    # --- Key Changes for Popup/Dropdown Editing ---
-    
     def createEditor(self, parent, option, index):
         """Creates the appropriate editor based on the column."""
         column_name = self._dataframe.columns[index.column()]
@@ -339,37 +388,11 @@ class EditablePandasModel(QAbstractTableModel):
 
     def add_column(self, column_name="New Column", column_data=None, dtype="object"):
         """Adds a new column with an optional data type."""
-        if dtype not in self.VALID_DTYPES:
-            raise ValueError(f"Invalid data type: {dtype}. Must be one of {self.VALID_DTYPES}.")
+        super().add_column(column_name, column_data, dtype)
 
-        # If the DataFrame is empty (no rows), initialize the column with one row
-        if self.rowCount() == 0:
-            # If no rows exist, initialize a default row (e.g., None for object type)
-            if dtype == "int64":
-                column_data = [0]  # Default to 0 for integer type
-            elif dtype == "float64":
-                column_data = [0.0]  # Default to 0.0 for float type
-            else:
-                column_data = [None]  # Default to None for object type
-
-        else:
-            # If rows exist, initialize the column with data matching the row count
-            if column_data is None:
-                if dtype == "int64":
-                    column_data = [0] * self.rowCount()
-                elif dtype == "float64":
-                    column_data = [0.0] * self.rowCount()
-                else:
-                    column_data = [None] * self.rowCount()
-
-        # Begin inserting the new column
-        self.beginInsertColumns(QModelIndex(), self.columnCount(), self.columnCount())
-
-        # Add the new column to the DataFrame
-        self._dataframe[column_name] = pd.Series(column_data, dtype=dtype)
-
-        # End the column insertion
-        self.endInsertColumns()
+        # Adjust column widths after adding a new column
+        if self.auto_fit_columns:
+            self.adjust_column_widths()
 
     def set_column_dtype(self, column_index, new_dtype):
         """Attempts to change the data type of an existing column. If conversion fails, offers to clear problematic data."""
@@ -426,12 +449,11 @@ class EditablePandasModel(QAbstractTableModel):
 
     def add_row(self, row_data=None):
         """Adds a new row at the bottom. If row_data is provided, it should be a list or dict."""
-        self.beginInsertRows(QModelIndex(), self.rowCount(), self.rowCount())
-        if row_data is None:
-            row_data = [None] * self.columnCount()
-        new_row = pd.DataFrame([row_data], columns=self._dataframe.columns)
-        self._dataframe = pd.concat([self._dataframe, new_row], ignore_index=True)
-        self.endInsertRows()
+        super().add_row(row_data)
+
+        # Adjust column widths after adding a new row
+        if self.auto_fit_columns:
+            self.adjust_column_widths()
 
     def move_row(self, row_index, direction):
         """Moves the row at row_index up or down. Direction should be -1 (up) or 1 (down).
@@ -493,3 +515,158 @@ class EditablePandasModel(QAbstractTableModel):
             self._sort_states[column_name] = None
 
         self.layoutChanged.emit()
+
+class EnhancedPandasModel(EditablePandasModel):
+    def __init__(self, dataframe, value_options=None, editable=True, parent=None,
+                 auto_fit_columns=False, dragNdrop=False, ui_only=True):
+        super().__init__(dataframe, value_options, editable, parent, auto_fit_columns)
+        self.dragNdrop = dragNdrop
+        self.ui_only = ui_only
+        self._column_order = list(range(len(dataframe.columns)))
+        self._sort_states = {}
+        self._original_index = self._dataframe.index.copy()  # Preserve the original row order
+        self._original_dataframe = dataframe.copy() 
+
+    def sort_column(self, column_index):
+        """Sorts the column in a cycle: original -> ascending -> descending."""
+        print("using enhanced model sort")
+        if not (0 <= column_index < self.columnCount()):
+            return
+
+        column_name = self._dataframe.columns[column_index]
+        if not hasattr(self, '_sort_states'):
+            self._sort_states = {}
+
+        current_state = self._sort_states.get(column_name, None)
+
+        if current_state is None:
+            self._dataframe.sort_values(by=column_name, ascending=True, inplace=True, ignore_index=False)
+            self._sort_states[column_name] = 'asc'
+        elif current_state == 'asc':
+            self._dataframe.sort_values(by=column_name, ascending=False, inplace=True, ignore_index=False)
+            self._sort_states[column_name] = 'desc'
+        else:
+            self.reset_sort()
+            self._sort_states[column_name] = None
+
+        self.layoutChanged.emit()
+
+    def sort_column_ascending(self, column_index):
+        """Sort the column in ascending order."""
+        if 0 <= column_index < self.columnCount():
+            column_name = self._dataframe.columns[column_index]
+            self._dataframe.sort_values(by=column_name, ascending=True, inplace=True)
+            self._sort_states[column_name] = 'asc'
+            self.layoutChanged.emit()
+
+    def sort_column_descending(self, column_index):
+        """Sort the column in descending order."""
+        if 0 <= column_index < self.columnCount():
+            column_name = self._dataframe.columns[column_index]
+            self._dataframe.sort_values(by=column_name, ascending=False, inplace=True)
+            self._sort_states[column_name] = 'desc'
+            self.layoutChanged.emit()
+
+    def reset_sort(self):
+        """
+        Resets the DataFrame's order to its original row index.
+        """
+        # print("PERFORMING RESET")
+        # print(self._dataframe)
+        self._dataframe = self._dataframe.sort_index().reset_index(drop=True)
+        self.layoutChanged.emit()  # Notify the view of changes
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid():
+            return None
+        if role in (Qt.DisplayRole, Qt.EditRole):
+            col = self._column_order[index.column()] if self.dragNdrop else index.column()
+            return str(self._dataframe.iloc[index.row(), col])
+        return super().data(index, role)
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if role == Qt.DisplayRole and orientation == Qt.Horizontal:
+            col = self._column_order[section] if self.dragNdrop else section
+            return str(self._dataframe.columns[col])
+        return super().headerData(section, orientation, role)
+
+    def supportedDragActions(self):
+        return Qt.MoveAction
+
+    def supportedDropActions(self):
+        return Qt.MoveAction
+
+    def mimeData(self, indexes):
+        mime_data = QMimeData()
+        if indexes:
+            col = indexes[0].column()
+            mime_data.setText(str(col))
+        return mime_data
+
+    def dropMimeData(self, data, action, row, column, parent):
+        if action == Qt.MoveAction and data.hasText():
+            source_col = int(data.text())
+            if column == -1:  # Dropped on header
+                column = parent.column()
+            if source_col != column:
+                self.moveColumn(source_col, column)
+                return True
+        return False
+
+    def moveColumn(self, source_col, target_col):
+        self.beginMoveColumns(QModelIndex(), source_col, source_col, QModelIndex(), target_col)
+        col = self._column_order.pop(source_col)
+        self._column_order.insert(target_col, col)
+        self.endMoveColumns()
+
+        if not self.ui_only:
+            reordered_columns = [self._dataframe.columns[i] for i in self._column_order]
+            self._dataframe = self._dataframe[reordered_columns]
+        self.layoutChanged.emit()
+
+class SortableTableView(QTableView):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.show_context_menu)
+
+        # Enable drag-and-drop for column reordering
+        self.setDragDropMode(QAbstractItemView.InternalMove)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.horizontalHeader().setSectionsMovable(True)
+        self.horizontalHeader().setDragEnabled(True)
+
+        # Disable sorting on header clicks
+        self.horizontalHeader().setSectionsClickable(False)
+
+        # Enable header context menu
+        self.horizontalHeader().setContextMenuPolicy(Qt.CustomContextMenu)
+        self.horizontalHeader().customContextMenuRequested.connect(self.show_header_context_menu)
+
+    def show_context_menu(self, position):
+        """Context menu with explicit sort options."""
+        index = self.indexAt(position)
+        if index.isValid():
+            column = index.column()
+            menu = QMenu()
+            menu.addAction("Sort Ascending", lambda: self.model().sort_column_ascending(column))
+            menu.addAction("Sort Descending", lambda: self.model().sort_column_descending(column))
+            menu.addAction("Reset Sort", lambda: self.model().reset_sort())
+            menu.exec_(self.viewport().mapToGlobal(position))
+
+    def show_header_context_menu(self, position):
+        """Context menu with explicit sort options."""
+        index = self.indexAt(position)
+        if index.isValid():
+            column = index.column()
+            menu = QMenu()
+            menu.addAction("Sort Ascending", lambda: self.model().sort_column_ascending(column))
+            menu.addAction("Sort Descending", lambda: self.model().sort_column_descending(column))
+            menu.addAction("Reset Sort", lambda: self.model().reset_sort())
+            menu.exec_(self.viewport().mapToGlobal(position))
+
+    def dropEvent(self, event):
+        """Handles drop events for reordering columns."""
+        super().dropEvent(event)
+        print("Drop event triggered.")

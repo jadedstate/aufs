@@ -5,7 +5,7 @@ import sys
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                                QMessageBox, QComboBox, QLabel, QFrame, QTextEdit, QFileDialog, QApplication, 
                                QListWidget, QListWidgetItem, QDialog, QCheckBox)
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, Signal
 import pandas as pd
 
 # Add the `src` directory to the Python path
@@ -17,14 +17,20 @@ from src.aufs.user_tools.deep_editor import DeepEditor  # The CSV editor compone
 from src.aufs.user_tools.packaging.string_remapper import StringRemapper  # The remapping logic class
 
 class StringMappingManager(QWidget):
-    def __init__(self, csv_path=None, parent=None):
+    selected_rows_updated = Signal(pd.DataFrame)
+
+    def __init__(self, csv_path=None, root_path=None, recipient=None, user=None, parent=None):
         super().__init__(parent)
         self.csv_path = csv_path
+        self.root_path = root_path  # Added root_path
+        self.recipient = recipient  # Added recipient
+        self.user = user  # Added user
         self.setWindowTitle(f"CSV and Remap Tool: {os.path.basename(self.csv_path) if self.csv_path else 'Untitled'}")
         self.resize(1000, 900)
 
         self.selected_rows_df = pd.DataFrame()  # Store selected rows
-        self.remapper = StringRemapper()  # Remapper instance
+        self.remapper = StringRemapper(root_path=root_path, recipient=recipient, user=user)
+
         self.button_flags = {'save': False, 'exit': False, 'add_row': False, 'delete_row': False, 'move_row_up': False, 'move_row_down': False}
         
         # Main layout
@@ -65,17 +71,19 @@ class StringMappingManager(QWidget):
         self.set_selection_button = QPushButton("Set Selection")
         self.set_selection_button.clicked.connect(self.set_selection)
         toggle_layout.addWidget(self.set_selection_button)
+        # remap_layout.addLayout(toggle_layout)
+
+        # "Delete DF Data" Button
+        self.delete_df_button = QPushButton("Delete DF Data")
+        self.delete_df_button.clicked.connect(self.clear_selected_data)
+        toggle_layout.addWidget(self.delete_df_button)
+
         remap_layout.addLayout(toggle_layout)
 
         # Results display pane (also used to show selected_rows_df)
         self.results_display = QTextEdit()
         self.results_display.setReadOnly(True)
         remap_layout.addWidget(self.results_display)
-
-        # "Delete DF Data" Button
-        self.delete_df_button = QPushButton("Delete DF Data")
-        self.delete_df_button.clicked.connect(self.clear_selected_data)
-        remap_layout.addWidget(self.delete_df_button)
 
         # Add remapping layout to main layout
         self.main_layout.addLayout(remap_layout)
@@ -84,13 +92,29 @@ class StringMappingManager(QWidget):
         if self.csv_path:
             self.load_csv()
 
-    def initialize_manager_with_csv(self, csv_path):
-        """Reinitialize the manager with a new CSV file."""
+    def initialize_manager_with_csv(self, csv_path, root_path=None, recipient=None, user=None, load_all=False):
+        """
+        Reinitialize the manager with a new CSV file and optional context.
+        
+        Parameters:
+        - csv_path (str): Path to the CSV file.
+        - root_path (str, optional): Root path for context.
+        - recipient (str, optional): Recipient name for context.
+        - user (str, optional): User name for context.
+        - load_all (bool, optional): If True, selects all rows in the DataFrame.
+        """
         if not os.path.exists(csv_path):
             QMessageBox.warning(self, "File Error", "The specified CSV file does not exist.")
             return
 
-        self.csv_path = csv_path  # Update the path for the manager
+        self.csv_path = csv_path
+        if root_path:
+            self.root_path = root_path
+        if recipient:
+            self.recipient = recipient
+        if user:
+            self.user = user
+
         try:
             # Reload the DeepEditor with the new file
             self.deep_editor.file_path = self.csv_path
@@ -102,13 +126,27 @@ class StringMappingManager(QWidget):
             self.select_all_toggle.setChecked(False)
             self.load_headers()
 
-            # Clear results display
+            # Update the remapper with the new context
+            self.remapper = StringRemapper(
+                root_path=self.root_path,
+                recipient=self.recipient,
+                user=self.user,
+                mappings_df=self.deep_editor.model.get_dataframe()
+            )
+
+            # Optionally load all rows
+            if load_all:
+                dataframe = self.deep_editor.model.get_dataframe()
+                if dataframe is not None:
+                    self.selected_rows_df = dataframe.copy()
+                    self.selected_rows_updated.emit(self.selected_rows_df)  # Emit signal
+                    self.display_selected_data()
+
             self.results_display.clear()
 
-            QMessageBox.information(self, "Load Successful", "Files loaded successfully.")
         except Exception as e:
             QMessageBox.critical(self, "Load Error", f"Failed to load the CSV file: {str(e)}")
-            
+
     def load_csv(self):
         """Load CSV data into the DeepEditor."""
         try:
@@ -151,7 +189,7 @@ class StringMappingManager(QWidget):
             QMessageBox.critical(self, "Error", f"Failed to populate ID values: {str(e)}")
 
     def set_selection(self):
-        """Set selected rows into `selected_rows_df`."""
+        """Set selected rows into `selected_rows_df` and emit the signal."""
         try:
             dataframe = self.deep_editor.model.get_dataframe()
             selected_values = self.get_selected_id_values()
@@ -160,6 +198,7 @@ class StringMappingManager(QWidget):
             if dataframe is not None and selected_header and selected_values:
                 # Filter DataFrame by selected values
                 self.selected_rows_df = dataframe[dataframe[selected_header].isin(selected_values)].copy()
+                self.selected_rows_updated.emit(self.selected_rows_df)  # Emit signal
                 self.display_selected_data()
             else:
                 QMessageBox.warning(self, "Selection Error", "Ensure a header and values are selected.")
@@ -190,7 +229,7 @@ class StringMappingManager(QWidget):
             result_text = "\n".join([f"{col}: {value}" for col, value in results])
             self.results_display.setText(result_text)
 
-    def map_requested_values(self, id_header, id_value, target_columns, row_data=None, remap_type='string'):
+    def map_requested_values(self, id_header, id_value, target_columns, ignore_columns, row_data=None, remap_type='string'):
         """
         Perform remapping with optional row_data and remap_type arguments.
 
@@ -204,7 +243,7 @@ class StringMappingManager(QWidget):
         Returns:
         - list: Result of the remapping operation.
         """
-        if not id_header or not id_value or not target_columns:
+        if not target_columns:
             QMessageBox.warning(self, "Input Error", "Please fill in all fields.")
             return
 
@@ -218,8 +257,8 @@ class StringMappingManager(QWidget):
 
         # Perform remapping and display results
         try:
-            result = self.remapper.remap(id_header, id_value, target_columns, row_data=row_data, remap_type=remap_type)
-            self.display_results(result)
+            result = self.remapper.remap(id_header, id_value, target_columns, row_data=row_data, remap_type=remap_type, ignore_columns=ignore_columns)
+            # self.display_results(result)
             return result
         except Exception as e:
             QMessageBox.critical(self, "Remap Error", f"Failed to remap values: {str(e)}")

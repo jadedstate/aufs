@@ -101,7 +101,7 @@ class PayloadHandler:
         """Route to the appropriate parser based on the parse_type."""
         if parse_type == "uppercase":
             return Parsers.extract_uppercase(chunk)
-        elif parse_type == "paths":
+        elif parse_type == "path":
             return Parsers.extract_paths(chunk)
         elif parse_type == "raw_item_name":
             return Parsers.extract_raw_item_names(chunk)  # New functionality for raw_item_name
@@ -236,14 +236,15 @@ class RequestorUI(QWidget):
         For raw_item_name - we use every row in the csv loaded in the manager to replace all the paths found in the file loaded in the requestor.
         """
         self.remap_type_options = {
-            "Remap paths": "paths"
+            "Raw Item-names - remap paths": "raw_item_name",
+            "Uppercase Variables, no curly brackets": "uppercase"
         }
 
         # Populate the combo box with display names
         self.remap_type_combo.addItems(self.remap_type_options.keys())
         remap_type_layout.addWidget(QLabel("Remap Type:"))
         remap_type_layout.addWidget(self.remap_type_combo)
-        # layout.addLayout(remap_type_layout)
+        layout.addLayout(remap_type_layout)
 
 
         # === Column Selection for CSV ===

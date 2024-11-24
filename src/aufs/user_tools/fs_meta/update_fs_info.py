@@ -1,32 +1,49 @@
 import sys
 import os
 import time
+import argparse
 import pandas as pd
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, 
+    QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QPushButton,
     QFileDialog, QListWidget, QMessageBox, QComboBox, QLabel, QDialog, QCheckBox, QTreeWidget, QTreeWidgetItem
 )
 from PySide6.QtCore import Qt
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
-src_path = os.path.join(current_dir, '..', '..', '..')
+src_path = os.path.join(current_dir, '..', '..', '..', '..')
 sys.path.insert(0, src_path)
 
 from src.aufs.user_tools.fs_meta.fs_info_from_paths import file_details_df_from_path
 from src.aufs.user_tools.deep_editor import DeepEditor
 
+
 class DirectoryLoaderUI(QMainWindow):
-    def __init__(self):
+    def __init__(self, jobs_dir=None, client=None, project=None):
         super().__init__()
         self.setWindowTitle("Directory Loader with Scraper")
         self.setGeometry(300, 100, 800, 600)
 
-        # Define paths and initialize key variables
-        self.jobs_dir = os.path.expanduser("~/.aufs/config/jobs/active")
+        # Initialize paths and variables
+        self.jobs_dir = jobs_dir or os.path.expanduser("~/.aufs/config/jobs/active")
+        self.client = client
+        self.project = project
         self.timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
         self.directories = []
 
-        # Main layout
+        # Setup UI
+        self.setup_ui()
+
+        # Load initial clients
+        self.load_clients()
+
+        # Select client and project if provided
+        if self.client:
+            self.set_client(self.client)
+        if self.project:
+            self.set_project(self.project)
+
+    def setup_ui(self):
+        """Setup the UI layout and components."""
         main_layout = QVBoxLayout()
         job_selection_layout = QHBoxLayout()
 
@@ -57,7 +74,7 @@ class DirectoryLoaderUI(QMainWindow):
         browse_directories_button = QPushButton("Browse Directories")
         browse_directories_button.clicked.connect(self.open_directory_browser)
         get_dirs_list_layout.addWidget(browse_directories_button)
-                
+
         load_csv_button = QPushButton("Load Directories from CSV")
         load_csv_button.clicked.connect(self.load_directories_from_csv)
         get_dirs_list_layout.addWidget(load_csv_button)
@@ -105,8 +122,15 @@ class DirectoryLoaderUI(QMainWindow):
         central_widget.setLayout(main_layout)
         self.setCentralWidget(central_widget)
 
-        # Load initial clients
-        self.load_clients()
+    def set_client(self, client):
+        """Set the client in the dropdown if available."""
+        if client in [self.client_dropdown.itemText(i) for i in range(self.client_dropdown.count())]:
+            self.client_dropdown.setCurrentText(client)
+
+    def set_project(self, project):
+        """Set the project in the dropdown if available."""
+        if project in [self.project_dropdown.itemText(i) for i in range(self.project_dropdown.count())]:
+            self.project_dropdown.setCurrentText(project)
 
     def load_clients(self):
         """Populate the client dropdown based on directories in jobs_dir."""
@@ -265,8 +289,20 @@ class DirectoryLoaderUI(QMainWindow):
         editor_dialog.setLayout(layout)
         editor_dialog.exec()
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for the application."""
+    parser = argparse.ArgumentParser(description="Directory Loader with Scraper")
+    parser.add_argument("--jobs_dir", type=str, help="Path to the jobs directory")
+    parser.add_argument("--client", type=str, help="Client to select on startup")
+    parser.add_argument("--project", type=str, help="Project to select on startup")
+
+    args = parser.parse_args()
+
     app = QApplication(sys.argv)
-    window = DirectoryLoaderUI()
+    window = DirectoryLoaderUI(jobs_dir=args.jobs_dir, client=args.client, project=args.project)
     window.show()
     sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

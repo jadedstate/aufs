@@ -5,12 +5,16 @@ import sys
 import re
 import pandas as pd
 import shutil
+from glob import glob  # Import the glob module
+import platform
+import subprocess
 from pathlib import Path
 from datetime import datetime
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTableView, QDialog, 
-                               QMessageBox, QLineEdit, QLabel, QTextEdit, QFileDialog, QMenu,
-                               QApplication, QComboBox, QListWidget, QListWidgetItem, QToolButton, QInputDialog, QTabWidget)
+                               QMessageBox, QLineEdit, QLabel, QSplitter, QFileDialog, QMenu, QCheckBox, 
+                               QApplication, QDialogButtonBox, QListWidget, QListWidgetItem, QToolButton, QInputDialog, QTabWidget)
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QIntValidator
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 src_path = os.path.join(current_dir, '..', '..', '..', '..')
@@ -20,20 +24,34 @@ from src.aufs.user_tools.packaging.string_mapping_manager import StringMappingMa
 from src.aufs.user_tools.packaging.string_mapping_snagging import StringRemappingSnaggingWidget
 from src.aufs.user_tools.editable_pandas_model import EditablePandasModel
 from src.aufs.user_tools.fs_meta.update_fs_info import DirectoryLoaderUI
+from aufs.user_tools.packaging.data_provisioning_widget import DataProvisioningWidget
+from src.aufs.user_tools.deep_editor import DeepEditor
 
-def QVBoxLayoutWrapper(label_text, widget, add_new_callback=None):
+def QVBoxLayoutWrapper(label_text, widget, add_new_callback=None, fixed_width=None, min_width=None):
     """
     Wraps a widget with a QLabel and optionally adds an "Add New" button below it.
+    Allows setting fixed or minimum width for the widget.
     """
+    if fixed_width is None:
+        fixed_width = 300
+        
     layout = QVBoxLayout()
 
     # Add label and the main widget
     layout.addWidget(QLabel(label_text))
+
+    # Apply width constraints to the widget
+    if fixed_width:
+        widget.setFixedWidth(fixed_width)
+    elif min_width:
+        widget.setMinimumWidth(min_width)
+
     layout.addWidget(widget)
 
     # Add "Add New" button if a callback is provided
     if add_new_callback:
         add_new_button = QPushButton(f"Add New {label_text[:-1]}")
+        add_new_button.setMaximumWidth(200)  # Restrict button width
         add_new_button.clicked.connect(add_new_callback)
         layout.addWidget(add_new_button)
 
@@ -61,6 +79,7 @@ class RequestorUI(QWidget):
         self.session_name = None
         self.request_name = None
         self.template_data = ''
+        self.root_output_dir = ''
 
         # Main layout setup using tabs
         self.tabs = QTabWidget(self)
@@ -71,7 +90,7 @@ class RequestorUI(QWidget):
 
         # Add manager and requestor tabs
         self.tabs.addTab(self.requestor_tab, "Requestor Interface")
-        self.tabs.addTab(self.manager_tab, "String Mapping Manager")
+        # self.tabs.addTab(self.manager_tab, "String Mapping Manager")
 
         # Setup the requestor UI within the `requestor_tab`
         self.setup_requestor_ui()
@@ -80,6 +99,59 @@ class RequestorUI(QWidget):
         main_layout = QVBoxLayout(self)
         main_layout.addWidget(self.tabs)
         self.setLayout(main_layout)
+
+    def setup_button_area(self, panes_layout):
+        """Adds a button area to the far right side of panes_layout."""
+        button_area_layout = QHBoxLayout()
+        button_area_layout.setAlignment(Qt.AlignTop)
+
+        # Create a left-side layout
+        button_area_leftside_layout = QVBoxLayout()
+
+        # Add other left-side buttons
+        edit_source_button = QPushButton("Edit Source CSV")
+        edit_source_button.clicked.connect(self.edit_source_csv)
+        button_area_leftside_layout.addWidget(edit_source_button)
+
+        edit_template_button = QPushButton("Edit Template")
+        edit_template_button.clicked.connect(self.edit_template_csv)
+        button_area_leftside_layout.addWidget(edit_template_button)
+
+        retire_button = QPushButton("Retire Request")
+        retire_button.clicked.connect(self.retire_request)
+        button_area_leftside_layout.addWidget(retire_button)
+
+        locate_request_files_button = QPushButton("Locate Files")
+        locate_request_files_button.clicked.connect(self.locate_request_files)
+        button_area_leftside_layout.addWidget(locate_request_files_button)
+
+        # Add to the main button area
+        button_area_leftside_layout.addStretch()
+        button_area_layout.addLayout(button_area_leftside_layout)
+
+        # Add the right-side buttons (unchanged)
+        button_area_rightside_layout = QVBoxLayout()
+
+        # Add "Replace Source" button
+        replace_source_button = QPushButton("Replace Source")
+        replace_source_button.clicked.connect(self.replace_source_file)
+        button_area_rightside_layout.addWidget(replace_source_button)
+
+        # Add "Replace Template" button
+        replace_template_button = QPushButton("Replace Template")
+        replace_template_button.clicked.connect(self.replace_template_file)
+        button_area_rightside_layout.addWidget(replace_template_button)
+
+        button_area_rightside_layout.addStretch()
+
+        button_area_layout.addLayout(button_area_rightside_layout)
+        button_area_layout.addStretch()
+
+        button_area_widget = QWidget()
+        button_area_widget.setFixedWidth(340)
+        button_area_widget.setLayout(button_area_layout)
+        panes_layout.addWidget(button_area_widget)
+        panes_layout.addStretch()
 
     def setup_requestor_ui(self):
         """Sets up both the session setup and file processing UI components."""
@@ -97,18 +169,21 @@ class RequestorUI(QWidget):
 
         # Collapsible widget for session setup
         self.session_setup_widget = QWidget()
-        self.session_setup_widget.setVisible(True)  # Hidden by default
+        self.session_setup_widget.setVisible(True)
         session_layout = QVBoxLayout(self.session_setup_widget)
 
+        jobs_directory_layout = QHBoxLayout()
         # Jobs Directory setup
         self.jobs_directory_input = QLineEdit(os.path.expanduser("~/.aufs/config/jobs/active"))
+        # self.jobs_directory_input.setMaximumWidth(500)
         self.browse_jobs_dir_button = QPushButton("Browse")
         self.browse_jobs_dir_button.clicked.connect(self.on_jobs_dir_change)
 
-        jobs_directory_layout = QHBoxLayout()
         jobs_directory_layout.addWidget(QLabel("Jobs Directory:"))
-        jobs_directory_layout.addWidget(self.jobs_directory_input)
         jobs_directory_layout.addWidget(self.browse_jobs_dir_button)
+        jobs_directory_layout.addWidget(self.jobs_directory_input)
+
+        jobs_directory_layout.addStretch()
 
         session_layout.addLayout(jobs_directory_layout)
 
@@ -166,8 +241,9 @@ class RequestorUI(QWidget):
         # Add cascading panes to layout
         session_layout.addLayout(panes_layout)
 
+        self.setup_button_area(panes_layout)
+
         session_setup_layout.addWidget(self.session_setup_widget)
-        layout.addLayout(session_setup_layout)
 
         # === Source File Loader Section ===
         source_file_layout = QHBoxLayout()
@@ -177,7 +253,7 @@ class RequestorUI(QWidget):
         source_file_layout.addWidget(QLabel("Source Files CSV:"))
         source_file_layout.addWidget(self.source_file_input)
         source_file_layout.addWidget(self.load_source_button)
-        layout.addLayout(source_file_layout)
+        # session_layout.addLayout(source_file_layout)
 
         # === File Processing Section ===
         file_layout = QHBoxLayout()
@@ -187,12 +263,27 @@ class RequestorUI(QWidget):
         file_layout.addWidget(QLabel("Provisioning template path:"))
         file_layout.addWidget(self.file_path_input)
         file_layout.addWidget(self.load_button)
-        layout.addLayout(file_layout)
+        # session_layout.addLayout(file_layout)
+
+        layout.addLayout(session_setup_layout)
+
+        self.selected_rows_buttons_layout = QHBoxLayout()
+
+        # Add a button to collapse/expand the Selected Rows Pane
+        self.toggle_selected_rows_button = QPushButton("Show Selected Rows Pane")
+        self.toggle_selected_rows_button.setCheckable(True)
+        self.toggle_selected_rows_button.setChecked(False)  # Default to collapsed
+        self.toggle_selected_rows_button.toggled.connect(self.toggle_selected_rows_pane)
+        self.selected_rows_buttons_layout.addWidget(self.toggle_selected_rows_button)
 
         # Add a button to open the column selector
         self.column_selector_button = QPushButton("Selected Rows's Columns for Preview")
         self.column_selector_button.clicked.connect(self.show_column_selector_popup)
-        layout.addWidget(self.column_selector_button)
+        self.selected_rows_buttons_layout.addWidget(self.column_selector_button)
+
+        self.selected_rows_buttons_layout.addStretch()
+
+        layout.addLayout(self.selected_rows_buttons_layout)
 
         # Add a placeholder for the selected columns
         self.selected_columns = []
@@ -205,10 +296,35 @@ class RequestorUI(QWidget):
         self.selected_rows_pane_table.setSelectionBehavior(QTableView.SelectRows)
         layout.addWidget(self.selected_rows_pane_table)
 
+        self.selected_rows_pane_table.setVisible(False)  # Initially hidden
+
+        self.preview_request_buttons_layout = QHBoxLayout()
+
+        # Add a button to collapse/expand the Preview Pane
+        self.toggle_preview_button = QPushButton("Show Preview Table")
+        self.toggle_preview_button.setCheckable(True)
+        self.toggle_preview_button.setChecked(False)
+        self.toggle_preview_button.toggled.connect(self.toggle_preview_table)
+        self.preview_request_buttons_layout.addWidget(self.toggle_preview_button)
+
+        # === Add Checkbox for Versioning Dialog ===
+        self.use_versioning_dialog_request_checkbox = QCheckBox("Use Versioning Dialog")
+        self.use_versioning_dialog_request_checkbox.setChecked(False)  # Default to unchecked
+        self.preview_request_buttons_layout.addWidget(self.use_versioning_dialog_request_checkbox)
+
         # === Process Button ===
         self.remap_button = QPushButton("Process and Preview Remap")
         self.remap_button.clicked.connect(lambda: self.process_remap(filter_parsed=True))
-        layout.addWidget(self.remap_button)
+        self.preview_request_buttons_layout.addWidget(self.remap_button)
+
+        # Add a checkbox for "Process Directories"
+        self.process_directories_checkbox = QCheckBox("Process Directories")
+        self.process_directories_checkbox.setChecked(False)  # Default to unchecked
+        self.preview_request_buttons_layout.addWidget(self.process_directories_checkbox)
+
+        self.preview_request_buttons_layout.addStretch()
+
+        layout.addLayout(self.preview_request_buttons_layout)
 
         # === Request Preview Section ===
         layout.addWidget(QLabel("Request preview:"))
@@ -217,6 +333,8 @@ class RequestorUI(QWidget):
         self.preview_table.setAlternatingRowColors(True)
         self.preview_table.setSelectionBehavior(QTableView.SelectRows)
         layout.addWidget(self.preview_table)
+
+        self.preview_table.setVisible(True)
 
         # === Save Button with Dropdown Menu ===
         save_button_layout = QHBoxLayout()
@@ -246,15 +364,38 @@ class RequestorUI(QWidget):
         self.session_preview_label = QLabel("Session Data Preview:")
         session_preview_layout.addWidget(self.session_preview_label)
 
-        # Add "Process Package" button
-        self.process_package_button = QPushButton("Process Package")
-        self.process_package_button.clicked.connect(self.remap_session_data)
-        session_preview_layout.addWidget(self.process_package_button)
+        # Add "Load Latest Saved" button
+        self.load_latest_button = QPushButton("Load Latest Saved")
+        self.load_latest_button.clicked.connect(self.load_latest_session_file)
+        session_preview_layout.addWidget(self.load_latest_button)
+
+        # Add "Load Previous Saved" button
+        self.load_previous_button = QPushButton("Load Previous Saved")
+        self.load_previous_button.clicked.connect(self.load_previous_session_file)
+        session_preview_layout.addWidget(self.load_previous_button)
+
+        # Add "Load latest Requests" button
+        self.load_latest_requests_button = QPushButton("Load latest Requests")
+        self.load_latest_requests_button.clicked.connect(self.create_session_df_from_latest_requests)
+        session_preview_layout.addWidget(self.load_latest_requests_button)
 
         # Add "Snag Rows" button
         self.snag_rows_button = QPushButton("Snag Rows")
         self.snag_rows_button.clicked.connect(self.launch_snag_popup)
         session_preview_layout.addWidget(self.snag_rows_button)
+
+        # Add "Process Package" button
+        self.process_package_button = QPushButton("Process Package")
+        self.process_package_button.clicked.connect(self.remap_session_data)
+        session_preview_layout.addWidget(self.process_package_button)
+
+        # === Add Checkbox for Versioning Dialog ===
+        self.use_versioning_dialog_session_checkbox = QCheckBox("Use Versioning Dialog")
+        self.use_versioning_dialog_session_checkbox.setChecked(False)  # Default to unchecked
+        self.use_versioning_dialog_session_checkbox.setMaximumWidth(200)
+        session_preview_layout.addWidget(self.use_versioning_dialog_session_checkbox)
+
+        session_preview_layout.addStretch()
 
         layout.addLayout(session_preview_layout)
 
@@ -264,6 +405,11 @@ class RequestorUI(QWidget):
         self.session_table.setSelectionBehavior(QTableView.SelectRows)
         layout.addWidget(self.session_table)
 
+        # === Provision Data Button ===
+        self.provision_data_button = QPushButton("Make Package")
+        self.provision_data_button.clicked.connect(lambda: self.provision_the_data())
+        layout.addWidget(self.provision_data_button)
+
         # === Save Session Button ===
         self.save_session_button = QPushButton("Save Session")
         self.save_session_button.clicked.connect(lambda: self.save_remapped_file("timestamped", data_source="session"))
@@ -271,6 +417,454 @@ class RequestorUI(QWidget):
 
         # Set the final layout
         self.requestor_tab.setLayout(layout)
+
+    def process_remap(self, filter_parsed=True, filter_list=None, filter_mode="exclude", add_source="prepend"):
+        """
+        Process remapping based on selected rows and display results in preview pane.
+        """
+        if self.manager.selected_rows_df.empty:
+            QMessageBox.warning(self, "Warning", "Please select rows in the manager before remapping.")
+            return
+
+        remapped_data = []  # Store remapped rows for DataFrame creation
+
+        use_dialog = self.use_versioning_dialog_request_checkbox.isChecked()
+
+        # Default filter list for process_remap
+        if filter_list is None:
+            filter_list = ["YYYYMMDD", "PKGVERSION3PADDED"]
+
+        for _, selected_row in self.manager.selected_rows_df.iterrows():
+            selected_row_dict = selected_row.to_dict()  # Convert row to dictionary
+
+            # Handle additional columns
+            if add_source in ["prepend", "append"]:
+                if self.selected_columns:
+                    source_columns = {col: selected_row_dict[col] for col in self.selected_columns if col in selected_row_dict}
+                else:
+                    source_columns = selected_row_dict
+            else:
+                source_columns = {}
+
+            # Filter template data for matching DOTEXTENSION
+            dotextension_value = selected_row_dict.get("DOTEXTENSION")
+            if dotextension_value and "DOTEXTENSION" in self.template_data.columns:
+                matching_template_rows = self.template_data[self.template_data["DOTEXTENSION"] == dotextension_value]
+            else:
+                matching_template_rows = self.template_data
+
+            if matching_template_rows.empty:
+                continue
+
+            # Remap matching template rows
+            for _, template_row in matching_template_rows.iterrows():
+                template_row_dict = template_row.to_dict()  # Convert template row to dict
+
+                # Collect all uppercase variables across all columns
+                parsed_variables = []
+                for key, value in template_row_dict.items():
+                    if isinstance(value, str):  # Parse only string columns
+                        parsed_variables.extend(self.payload_handler.parse(value, "uppercase"))
+
+                # Filter variables based on filter_parsed, filter_list, and filter_mode
+                if filter_parsed:
+                    if filter_mode == "exclude":
+                        parsed_variables = [var for var in parsed_variables if var not in filter_list]
+                    elif filter_mode == "include":
+                        parsed_variables = [var for var in parsed_variables if var in filter_list]
+
+                # Use the helper function to remap variables
+                # print(selected_row_dict, parsed_variables)
+                mappings = self._remap_variables(
+                    parsed_variables=parsed_variables,
+                    row_data=selected_row_dict,
+                    root_job_path=self.root_job_path,
+                    remap_type="uppercase",
+                    use_dialog=use_dialog
+                )
+
+                # Apply mappings
+                if mappings:
+                    for col, value in template_row_dict.items():
+                        if isinstance(value, str):
+                            template_row_dict[col] = self.reintegrate_using_parser(value, parsed_variables, mappings)
+
+                # Combine source and remapped rows
+                if add_source == "prepend":
+                    remapped_row_with_context = {**source_columns, **template_row_dict}
+                elif add_source == "append":
+                    remapped_row_with_context = {**template_row_dict, **source_columns}
+                else:
+                    remapped_row_with_context = template_row_dict
+
+                remapped_data.append(remapped_row_with_context)
+
+        # Create DataFrame and update the preview table
+        self.selected_rows_remapped_df = pd.DataFrame(remapped_data)
+        if self.selected_rows_remapped_df.empty:
+            QMessageBox.warning(self, "No Data", "No remapped results to display.")
+        else:
+            self.update_preview_table(self.selected_rows_remapped_df)
+
+    def remap_session_data(self):
+        """
+        Remap every row in session_df for remaining uppercase variables.
+        Display the remapped session data in the session preview pane.
+        """
+        if self.session_df is None or self.session_df.empty:
+            QMessageBox.warning(self, "No Data", "No session data available to process.")
+            return
+        
+        use_dialog = self.use_versioning_dialog_session_checkbox.isChecked()
+
+        try:
+            remapped_data = []  # Store remapped rows as dictionaries
+
+            for _, row in self.session_df.iterrows():
+                row_as_dict = row.to_dict()  # Convert row to dictionary
+
+                # Collect all uppercase variables across all columns
+                parsed_variables = []
+                for col_name, value in row_as_dict.items():
+                    if isinstance(value, str):  # Parse only string columns
+                        parsed_variables.extend(self.payload_handler.parse(value, "uppercase"))
+
+                # Deduplicate parsed variables
+                parsed_variables = list(set(parsed_variables))
+
+                # Use the helper function to remap variables
+                # print("Session data remapping: ", row_as_dict, parsed_variables)
+                mappings = self._remap_variables(
+                    parsed_variables=parsed_variables,
+                    row_data=row_as_dict,
+                    root_job_path=self.root_job_path,
+                    remap_type="uppercase",
+                    use_dialog=use_dialog
+                )
+
+                # Apply mappings
+                if mappings:
+                    for col_name, value in row_as_dict.items():
+                        if isinstance(value, str):
+                            row_as_dict[col_name] = self.reintegrate_using_parser(value, parsed_variables, mappings)
+
+                remapped_data.append(row_as_dict)
+
+            # Update session DataFrame and preview
+            self.remapped_session_df = pd.DataFrame(remapped_data)
+            self.session_df = self.remapped_session_df
+
+            if self.remapped_session_df.empty:
+                print("No remapped session data to display.")
+            else:
+                self.update_session_table(self.remapped_session_df)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to remap session data: {str(e)}")
+
+    def _remap_variables(self, parsed_variables, row_data, root_job_path, remap_type="uppercase", use_dialog=False):
+        """
+        Helper function to remap parsed variables using the manager.
+
+        Args:
+            parsed_variables (list): List of parsed variables to be remapped.
+            row_data (dict or DataFrame): Data for the row being processed.
+            root_job_path (str): Root job path for remapping operations.
+            remap_type (str): Type of remapping to be performed (default: "uppercase").
+            use_dialog (bool): Whether to show a dialog for versioning type selection.
+
+        Returns:
+            dict: Mapped variables.
+        """
+
+        return self.manager.map_requested_values(
+            id_header=None,
+            id_value=None,
+            target_columns=parsed_variables,
+            virtual_headers=None,
+            ignore_columns='',
+            root_job_path=root_job_path,
+            row_data=pd.DataFrame([row_data]) if isinstance(row_data, dict) else row_data,
+            use_dialog=use_dialog,
+            remap_type=remap_type,
+        )
+
+    def replace_source_file(self):
+        """Replace the source file for the current request using the prompt."""
+        source_file_path = self.prompt_source_file_path()
+        if source_file_path:
+            destination_path = os.path.join(self.requests_dir, f"{self.request_name}_source_files.csv")
+            self.replace_file(source_file_path, destination_path)
+            QMessageBox.information(self, "Success", "Source file replaced successfully.")
+        else:
+            QMessageBox.warning(self, "Operation Canceled", "Source file replacement was canceled.")
+
+    def replace_template_file(self):
+        """Replace the template file for the current request."""
+        template_file_path = self.prompt_provisioning_template_path()
+        if template_file_path:
+            destination_path = os.path.join(self.requests_dir, f"{self.request_name}_provisioning_template.csv")
+            self.replace_file(template_file_path, destination_path)
+            QMessageBox.information(self, "Success", "Template file replaced successfully.")
+
+    def replace_file(self, source_path, destination_path, timestamp_backup=True):
+        """
+        Replace a file at `destination_path` with `source_path`.
+        Optionally creates a timestamped backup of the existing destination file.
+
+        Args:
+            source_path (str): The file to copy from.
+            destination_path (str): The file to copy to.
+            timestamp_backup (bool): Whether to create a timestamped backup of the destination file if it exists.
+        """
+        if os.path.exists(destination_path) and timestamp_backup:
+            # Create a timestamped backup of the existing file
+            timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+            backup_path = f"{destination_path}-{timestamp}"
+            shutil.copyfile(destination_path, backup_path)
+            print(f"Backup created: {backup_path}")
+
+        # Replace the destination file with the source file
+        shutil.copyfile(source_path, destination_path)
+        print(f"Replaced {destination_path} with {source_path}")
+
+    def open_csv_in_deepeditor(self, file_path, description):
+        """
+        Opens the given CSV file in the DeepEditor for editing.
+        
+        Args:
+            file_path (str): The path to the CSV file.
+            description (str): A description of the file for error messages and logging.
+        """
+        if not file_path or not os.path.exists(file_path):
+            QMessageBox.warning(self, f"{description} File Not Found", f"The {description} CSV file is missing or invalid.")
+            return
+
+        # Wrap DeepEditor in a QDialog
+        dialog = QDialog(self)
+        layout = QVBoxLayout(dialog)
+        button_flags = {
+            'add_row': True,
+            'delete_row': True,
+            'move_row_up': True,
+            'move_row_down': True,
+            'add_column': True,
+            'delete_column': True,
+            'move_column_left': True,
+            'move_column_right': True,
+            'sort_column': True,
+            'clear_selection': True,
+            'set_column_type': True,
+            'dtype_dropdown': True,
+            'reload': True,
+            'save': True,
+            'exit': False
+        }
+        editor = DeepEditor(file_path=file_path, button_flags=button_flags, file_type="csv")
+        layout.addWidget(editor)
+
+        # Set dialog properties
+        dialog.setWindowTitle(f"Edit {description} CSV")
+        dialog.resize(3000, 800)
+
+        # Open the dialog modally
+        result = dialog.exec()
+
+        # Check for changes after the dialog closes
+        if not editor.changes_made:
+            # QMessageBox.information(self, "No Changes", f"No changes were made to the {description} CSV.")
+            return
+        else:
+            if description.lower() == "source":
+                self.load_source_csv(file_path)
+            elif description.lower() == "template":
+                self.load_provisioning_template(file_path)
+
+    def edit_source_csv(self):
+        """Opens the source CSV file in the DeepEditor."""
+        source_file_path = self.source_file_input.text()
+        self.open_csv_in_deepeditor(source_file_path, "Source")
+
+    def edit_template_csv(self):
+        """Opens the template CSV file in the DeepEditor."""
+        template_file_path = self.file_path_input.text()
+        self.open_csv_in_deepeditor(template_file_path, "Template")
+
+    def provision_the_data(self):
+        # Open path confirmation dialog
+        dialog = PathConfirmationDialog(self.recipient_out)
+        if dialog.exec() == QDialog.Accepted:  # If the user confirms
+            self.recipient_out = dialog.selected_path  # Update the path
+
+            # Filter session_df to include only rows where STATUS == "valid"
+            provisioning_df = self.session_df.loc[self.session_df["STATUS"] == "valid"]
+
+            # Pass the filtered DataFrame to the provisioner
+            self.provisioner = DataProvisioningWidget(provisioning_df, self.recipient_out)
+            self.provisioner.show()
+
+    def locate_request_files(self):
+        """
+        Open the parent folder of the source and template files for the currently selected request.
+        """
+        if not self.request_name or not self.requests_dir:
+            QMessageBox.warning(self, "No Request Selected", "Please select a request to locate its files.")
+            return
+
+        # Define file paths
+        source_file_path = os.path.join(self.requests_dir, f"{self.request_name}_source_files.csv")
+        template_file_path = os.path.join(self.requests_dir, f"{self.request_name}_provisioning_template.csv")
+
+        # Determine the folder to open
+        folder_to_open = None
+        if os.path.exists(source_file_path):
+            folder_to_open = os.path.dirname(source_file_path)
+        elif os.path.exists(template_file_path):
+            folder_to_open = os.path.dirname(template_file_path)
+
+        if not folder_to_open or not os.path.exists(folder_to_open):
+            QMessageBox.warning(self, "Folder Not Found", "The parent folder for the selected request's files could not be located.")
+            return
+
+        # Open the folder in the system's file browser
+        try:
+            system_platform = platform.system()
+            if system_platform == "Windows":
+                os.startfile(folder_to_open)
+            elif system_platform == "Darwin":  # macOS
+                subprocess.run(["open", folder_to_open])
+            else:  # Linux
+                subprocess.run(["xdg-open", folder_to_open])
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open the folder: {str(e)}")
+
+    def load_latest_session_file(self):
+        """Load the latest saved session file into session_df and update the session table."""
+        if self.session_manager.saved_session_files_df.empty:
+            QMessageBox.warning(self, "No Files", "No latest session file available.")
+            return
+
+        try:
+            self.saved_session_files_df = self.session_manager.saved_session_files_df
+            latest_file_row = self.saved_session_files_df[self.saved_session_files_df['is_latest']].iloc[0]
+            latest_file_path = latest_file_row['file_path']
+            
+            # Use dtype mapping to ensure proper column types
+            dtype_mapping = {
+                'PADDING': str,
+                'FIRSTFRAME': str,
+                'LASTFRAME': str,
+            }
+            session_df = pd.read_csv(latest_file_path, dtype=dtype_mapping)
+
+            # Validate or filter session_df as in create_session_df_from_latest_requests
+            self.session_df = self.filter_session_data(session_df)
+            self.update_session_table(self.session_df)  # Refresh the session table
+            QMessageBox.information(self, "File Loaded", f"Loaded latest session file:\n{latest_file_row['file_name']}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load the latest session file: {str(e)}")
+
+    def load_previous_session_file(self):
+        """Load a previously saved session file from a list of available files."""
+        if self.session_manager.saved_session_files_df.empty:
+            QMessageBox.warning(self, "No Files", "No session files available.")
+            return
+
+        # Show a list of available files
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Select a Previous Session File")
+        layout = QVBoxLayout(dialog)
+
+        file_list_widget = QListWidget()
+        # Add file names from the saved session files DataFrame
+        for _, row in self.session_manager.saved_session_files_df.iterrows():
+            file_list_widget.addItem(row['file_name'])
+        layout.addWidget(file_list_widget)
+
+        button_layout = QHBoxLayout()
+        ok_button = QPushButton("OK")
+        cancel_button = QPushButton("Cancel")
+        button_layout.addWidget(ok_button)
+        button_layout.addWidget(cancel_button)
+        layout.addLayout(button_layout)
+
+        def select_file():
+            selected_item = file_list_widget.currentItem()
+            if selected_item:
+                selected_file = selected_item.text()
+                dialog.accept()
+                self.load_specific_session_file(selected_file)
+            else:
+                QMessageBox.warning(self, "No Selection", "Please select a file.")
+
+        ok_button.clicked.connect(select_file)
+        cancel_button.clicked.connect(dialog.reject)
+
+        dialog.exec()
+
+    def load_specific_session_file(self, file_name):
+        """Load the specified session file into session_df and update the session table."""
+        try:
+            # Find the file path in the DataFrame
+            file_row = self.session_manager.saved_session_files_df[self.session_manager.saved_session_files_df['file_name'] == file_name]
+            if file_row.empty:
+                QMessageBox.warning(self, "File Not Found", f"File '{file_name}' not found in the session files.")
+                return
+
+            session_file_path = file_row.iloc[0]['file_path']
+            
+            dtype_mapping = {
+                'PADDING': str,
+                'FIRSTFRAME': str,
+                'LASTFRAME': str,
+            }  # , dtype=dtype_mapping
+            # Load the file into the session DataFrame
+            self.session_df = pd.read_csv(session_file_path, dtype=dtype_mapping)
+            self.update_session_table(self.session_df)  # Refresh the session table
+            QMessageBox.information(self, "File Loaded", f"Loaded session file:\n{file_name}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load the session file: {str(e)}")
+
+    def retire_request(self):
+        """Retire the selected request by delegating to SessionManager."""
+        if not self.request_name:
+            QMessageBox.warning(self, "No Request Selected", "Please select a request to retire.")
+            return
+
+        # Ask for confirmation
+        reply = QMessageBox.question(
+            self, "Confirm Retire",
+            f"Are you sure you want to retire the request '{self.request_name}'?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        try:
+            # Delegate retiring logic to SessionManager
+            files_moved = self.session_manager.retire_request(
+                client=self.client,
+                project=self.project,
+                recipient=self.recipient,
+                session_name=self.session_name,
+                request_name=self.request_name
+            )
+
+            if files_moved == 0:
+                QMessageBox.warning(
+                    self, "No Files Found",
+                    f"No files found matching '{self.request_name}*' in the requests folder."
+                )
+            else:
+                QMessageBox.information(
+                    self, "Request Retired",
+                    f"The request '{self.request_name}' has been retired successfully.\n"
+                    f"{files_moved} file(s) moved to 'retired'."
+                )
+            self.populate_requests()  # Refresh the requests list
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to retire the request: {str(e)}")
 
     def apply_resizing_to_views(self):
         """
@@ -286,8 +880,15 @@ class RequestorUI(QWidget):
             if isinstance(model, EditablePandasModel):
                 model.apply_column_widths(view)
 
-    def show_column_selector_popup(self):
-        """Show a popup to select columns from selected_rows for preview."""
+    def show_column_selector_popup(self, use_selection_order=False):
+        """
+        Show a popup to select columns from selected_rows for preview, with an option
+        to use either the DataFrame column order or the selection order.
+
+        Args:
+            use_selection_order (bool): If True, the order of selected columns will be based on selection order.
+                                        If False, it will follow the DataFrame column order.
+        """
         if self.manager.selected_rows_df is None or self.manager.selected_rows_df.empty:
             QMessageBox.warning(self, "No Data", "No selected rows available for column selection.")
             return
@@ -300,16 +901,17 @@ class RequestorUI(QWidget):
         # Multi-select list of columns
         column_list = QListWidget()
         column_list.setSelectionMode(QListWidget.MultiSelection)
-        
-        # Whitelist of default columns
-        default_columns = ["FILE", "FIRSTFRAME", "LASTFRAME", "PADDING"]
-        available_default_columns = [col for col in default_columns if col in self.manager.selected_rows_df.columns]
 
+        # List of columns currently selected
+        active_columns = set(self.selected_columns)
+        # print("Active columns are: ", active_columns)
+
+        # Populate the column list
         for column in self.manager.selected_rows_df.columns:
             item = QListWidgetItem(column)
-            # Pre-select whitelist columns
-            item.setSelected(column in available_default_columns)
-            column_list.addItem(item)
+            column_list.addItem(item)  # Add the item first
+            if column in active_columns:  # Highlight the active columns
+                item.setSelected(True)  # Set it as selected
 
         layout.addWidget(column_list)
 
@@ -322,9 +924,16 @@ class RequestorUI(QWidget):
         layout.addLayout(button_layout)
 
         def apply_selection():
-            self.selected_columns = [
-                item.text() for item in column_list.selectedItems()
-            ]
+            selected_items = column_list.selectedItems()
+            if use_selection_order:
+                # Use the order of selection
+                self.selected_columns = [item.text() for item in selected_items]
+            else:
+                # Use the order from the DataFrame
+                self.selected_columns = [
+                    column for column in self.manager.selected_rows_df.columns
+                    if column in {item.text() for item in selected_items}
+                ]
             dialog.accept()
             self.update_selected_rows_columns()  # Update the preview pane table
 
@@ -388,70 +997,6 @@ class RequestorUI(QWidget):
         # Apply column resizing after updating the model
         self.apply_resizing_to_views()
 
-    def remap_session_data(self):
-        """
-        Remap every row in session_df for remaining uppercase variables.
-        Display the remapped session data in the session preview pane.
-        """
-        if self.session_df is None or self.session_df.empty:
-            QMessageBox.warning(self, "No Data", "No session data available to process.")
-            return
-
-        try:
-            remapped_data = []  # List to hold remapped rows as dictionaries
-
-            # Iterate over each row in session_df
-            for _, row in self.session_df.iterrows():
-                row_as_dict = row.to_dict()  # Convert row to dict for column-wise processing
-
-                # Collect all uppercase variables across all columns
-                parsed_variables = []
-                for col_name, value in row_as_dict.items():
-                    if isinstance(value, str):  # Parse only string columns
-                        parsed_variables.extend(self.payload_handler.parse(value, "uppercase"))
-
-                # Deduplicate parsed variables
-                parsed_variables = list(set(parsed_variables))
-                # print(parsed_variables)
-
-                # Remap all parsed variables at once
-                mappings = self.manager.map_requested_values(
-                    id_header=None,
-                    id_value=None,
-                    target_columns=parsed_variables,
-                    ignore_columns='',  # Ensure all columns are considered
-                    row_data=pd.DataFrame([row_as_dict]),  # Pass the row as a single-row DataFrame
-                    remap_type="uppercase"
-                )
-                # print(mappings)
-
-                # Create a mapping dictionary for replacement
-                mapping_dict = mappings # {original: replacement for original, replacement in mappings if replacement.strip()}
-                # print(mapping_dict)
-
-                # Perform replacements in each column of the row
-                for col_name, value in row_as_dict.items():
-                    if isinstance(value, str):  # Only replace in string columns
-                        for original, replacement in mapping_dict.items():
-                            value = value.replace(original, replacement)
-                        row_as_dict[col_name] = value  # Update the column with replaced value
-
-                remapped_data.append(row_as_dict)
-
-            # Store remapped session data in remapped_session_df
-            self.remapped_session_df = pd.DataFrame(remapped_data)
-            self.session_df = self.remapped_session_df  # Update session_df to reflect remapped data
-
-            # Display remapped data in the session preview pane
-            if self.remapped_session_df.empty:
-                print("No remapped session data to display.")
-            else:
-                # self.session_preview_pane.setText(self.remapped_session_df.to_string(index=False))
-                self.update_session_table(self.remapped_session_df)
-
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to remap session data: {str(e)}")
-
     def launch_snag_popup(self):
         """Launch the StringRemappingSnaggingWidget for snagging rows."""
         if self.session_df is None or self.session_df.empty:
@@ -462,17 +1007,17 @@ class RequestorUI(QWidget):
             # Create a QDialog to wrap the StringRemappingSnaggingWidget
             dialog = QDialog(self)
             dialog.setWindowTitle("Snag Rows")
-            dialog.resize(1800, 600)
+            dialog.resize(2200, 600)
 
             # Initialize the StringRemappingSnaggingWidget
             # print("Before snagging: ")
             # print(self.session_df)
             widget = StringRemappingSnaggingWidget(
                 dataframe=self.session_df.copy(),
-                dropdown_column="SUBCLIENTMATCHMOVE",
-                dedupe_column="FILE",
-                # dedupe_column="SUBCLIENTMATCHMOVE",
-                # dropdown_column="FILE",
+                # dropdown_column="PROVISIONEDLINK",
+                # dedupe_column="FILE",
+                dedupe_column="PROVISIONEDLINK",
+                dropdown_column="FILE",
                 parent=dialog
             )
 
@@ -581,6 +1126,7 @@ class RequestorUI(QWidget):
         self.clear_list(self.request_selector)
         self.clear_session_table()
         self.populate_sessions()
+        self.on_recipient_change()
 
     def on_session_selected(self, item):
         """Handles session selection and populates requests."""
@@ -619,26 +1165,57 @@ class RequestorUI(QWidget):
 
     def populate_clients(self):
         self.clear_list(self.client_selector)
+        self.root_directory = self.session_manager.root_directory
+        self.client = ''
+        self.project = ''
+        self.recipient = ''
+        self.session_name = ''
+        self.request_name = ''
         for client in self.session_manager.get_clients():
-            self.client_selector.addItem("New Client") if client == "New Client" else self.client_selector.addItem(client)
+            # Remove the item with the text "vendors"
+            # print("Client is: ",client)
+            if client == "vendors":
+                continue
+            if client == "OUT":
+                continue
+            if client == "packaging":
+                continue
+
+
+            # Add "New Client" or other client
+            if client == "New Client":
+                self.client_selector.addItem("New Client")
+            else:
+                # print("Client again: ", client)
+                self.client_selector.addItem(client)
 
     def populate_projects(self):
         self.clear_list(self.project_selector)
+        self.project = ''
+        self.recipient = ''
+        self.session_name = ''
+        self.request_name = ''
         for project in self.session_manager.get_projects(self.client):
             self.project_selector.addItem("New project") if project == "New project" else self.project_selector.addItem(project)
 
     def populate_recipients(self):
         self.clear_list(self.recipient_selector)
+        self.recipient = ''
+        self.session_name = ''
+        self.request_name = ''
         for recipient in self.session_manager.get_recipients(self.client, self.project):
             self.recipient_selector.addItem("New recipient") if recipient == "New recipient" else self.recipient_selector.addItem(recipient)
 
     def populate_sessions(self):
         self.clear_list(self.session_selector)
+        self.session_name = ''
+        self.request_name = ''
         for session in self.session_manager.get_sessions(self.client, self.project, self.recipient):
             self.session_selector.addItem("New session") if session == "New session" else self.session_selector.addItem(session)
 
     def populate_requests(self):
         self.clear_list(self.request_selector)
+        self.request_name = ''
         for request in self.session_manager.get_requests(self.client, self.project, self.recipient, self.session_name):
             self.request_selector.addItem("New request") if request == "New request" else self.request_selector.addItem(request)
 
@@ -686,8 +1263,21 @@ class RequestorUI(QWidget):
             self.populate_recipients()
 
     def on_recipient_change(self):
-        selected_recipient = self.recipient_selector.currentItem()
-        self.recipient = selected_recipient
+        selected_recipient_item = self.recipient_selector.currentItem()
+        if selected_recipient_item:
+            selected_recipient = selected_recipient_item.text()  # Extract text
+            self.recipient = selected_recipient
+        else:
+            self.recipient = None  # Handle cases where no item is selected
+
+        if not self.root_output_dir:
+            self.root_output_dir = self.session_manager.root_directory
+
+        if self.recipient == "client":
+            self.recipient_out = os.path.join(self.root_output_dir, "OUT", "client", self.client, self.project)
+        else:
+            self.recipient_out = os.path.join(self.root_output_dir, "OUT", "vendor", self.recipient, self.client, self.project)
+
         if selected_recipient == "New Recipient":
             selected_client = self.client_selector.currentItem()
             selected_project = self.project_selector.currentItem()
@@ -696,7 +1286,11 @@ class RequestorUI(QWidget):
                     self,
                     self.recipient_selector,
                     "Recipient",
-                    lambda recipient: self.session_manager.add_new_recipient(selected_client, selected_project, recipient),
+                    lambda recipient: self.session_manager.add_new_recipient(
+                        selected_client.text(),  # Extract text for `selected_client`
+                        selected_project.text(),  # Extract text for `selected_project`
+                        recipient,
+                    ),
                 )
         elif selected_recipient == "":
             return
@@ -707,7 +1301,7 @@ class RequestorUI(QWidget):
     def on_session_change(self):
         """Handle changes in the Session dropdown."""
         selected_session = self.session_name
-        self.requests_file = os.path.join(self.root_path, self.recipient, "sessions", self.session_name, f"{self.session_name}_requests.csv")
+        self.requests_file = os.path.join(self.session_manager.root_directory, self.recipient, "sessions", self.session_name, f"{self.session_name}_requests.csv")
 
         if selected_session == "New Session":
             selected_client = self.client_selector.currentItem()
@@ -725,43 +1319,60 @@ class RequestorUI(QWidget):
         elif selected_session == "":
             return
         else:
-            # self.clear_requests()
             self.populate_requests()
+            self.create_session_df_from_latest_requests()  # Use the helper method
 
-            # === Load or Generate Session Data ===
-            try:
-                session_dir = os.path.join(
-                    self.jobs_directory_input.text(), self.client, self.project, "packaging", self.recipient, "sessions", self.session_name
-                )
-                requests_dir = os.path.join(session_dir, "requests")
+    def create_session_df_from_latest_requests(self):
+        """
+        Initialize session_df from the latest CSV files in the session directory.
+        Filters and combines request files into a single DataFrame.
+        """
+        try:
+            session_dir = os.path.join(
+                self.jobs_directory_input.text(), self.client, self.project, "packaging", 
+                self.recipient, "sessions", self.session_name
+            )
+            requests_dir = os.path.join(session_dir, "requests")
+            os.makedirs(requests_dir, exist_ok=True)  # Ensure the requests directory exists
 
-                session_df = pd.DataFrame()
-                request_files = [
-                    file for file in os.listdir(requests_dir)
-                    if re.match(r".+-\d{14}\.csv", file)
-                ]
-                latest_requests = {}
-                # Find the latest request files for each request
-                for file in request_files:
-                    request_name = file.split("-")[0]
-                    if request_name not in latest_requests or file > latest_requests[request_name]:
-                        latest_requests[request_name] = file
-                # Load and concatenate the latest request files
-                for request_file in latest_requests.values():
-                    request_file_path = os.path.join(requests_dir, request_file)
-                    request_df = pd.read_csv(request_file_path)
-                    session_df = pd.concat([session_df, request_df], ignore_index=True)
-                self.session_df = session_df
-                self.session_df = self.filter_session_data(self.session_df)
+            session_df = pd.DataFrame()  # Placeholder for the combined DataFrame
 
-                # Display the session DataFrame in the session preview pane
-                if session_df.empty:
-                    pass
-                else:
-                    self.update_session_table(self.session_df)
+            # Find request files with a timestamp in their name
+            request_files = [
+                file for file in os.listdir(requests_dir)
+                if re.match(r".+-\d{14}\.csv", file)
+            ]
+            if not request_files:
+                # QMessageBox.warning(self, "No Request Files", "No timestamped request files found.")
+                return
 
-            except Exception as e:
-                print(f"Error loading session data: {e}")
+            latest_requests = {}
+            # Find the latest request file for each unique request name
+            for file in request_files:
+                request_name = file.split("-")[0]  # Extract the base request name
+                if request_name not in latest_requests or file > latest_requests[request_name]:
+                    latest_requests[request_name] = file
+
+            # Load and combine the latest request files into a single DataFrame
+            for request_file in latest_requests.values():
+                request_file_path = os.path.join(requests_dir, request_file)
+            
+                dtype_mapping = {
+                    'PADDING': str,
+                    'FIRSTFRAME': str,
+                    'LASTFRAME': str,
+                }  # , dtype=dtype_mapping Default to an empty dictionary if no mapping is provided
+                # self.dataframe = pd.read_csv(self.file_path, dtype=dtype_mapping)
+
+                request_df = pd.read_csv(request_file_path, dtype=dtype_mapping)
+                session_df = pd.concat([session_df, request_df], ignore_index=True)
+
+            # self.session_df = self.filter_session_data(session_df)
+            self.session_df = session_df
+            self.update_session_table(self.session_df)  # Refresh the session table
+            # QMessageBox.information(self, "Requests Loaded", "Latest request files have been loaded.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load requests: {str(e)}")
 
     def filter_session_data(self, dataframe: pd.DataFrame) -> pd.DataFrame:
         """
@@ -774,12 +1385,19 @@ class RequestorUI(QWidget):
             pd.DataFrame: The filtered DataFrame.
         """
         if dataframe.empty:
-            return dataframe  # Return as-is if the DataFrame is empty
+            print("DataFrame is empty.")
+            return dataframe
 
-        # Dedupe by RAWITEMNAME column (if it exists)
+        print(f"Initial DataFrame shape: {dataframe.shape}")
+
         if "RAWITEMNAME" in dataframe.columns:
+            initial_rows = len(dataframe)
             dataframe = dataframe.drop_duplicates(subset=["RAWITEMNAME"], keep="first")
+            print(f"Removed {initial_rows - len(dataframe)} duplicate rows based on 'RAWITEMNAME'.")
+        else:
+            print("'RAWITEMNAME' column not found. No deduplication applied.")
 
+        print(f"Final DataFrame shape: {dataframe.shape}")
         return dataframe
 
     def on_request_change(self):
@@ -803,9 +1421,9 @@ class RequestorUI(QWidget):
             source_file_path = os.path.join(self.requests_dir, f"{selected_request}_source_files.csv")
             provisioning_template_path = os.path.join(self.requests_dir, f"{selected_request}_provisioning_template.csv")
             self.file_path = os.path.join(self.requests_dir, f"{selected_request}.csv")
-            print(source_file_path)
-            print(provisioning_template_path)
-            print(self.file_path)
+            # print(source_file_path)
+            # print(provisioning_template_path)
+            # print(self.file_path)
 
             missing_files = []
             if not os.path.exists(source_file_path):
@@ -858,7 +1476,13 @@ class RequestorUI(QWidget):
                         latest_file_path = os.path.join(self.requests_dir, latest_file)
 
                         # Load the latest remapped file into `selected_rows_remapped_df`
-                        self.selected_rows_remapped_df = pd.read_csv(latest_file_path)
+                    
+                        dtype_mapping = {
+                            'PADDING': str,
+                            'FIRSTFRAME': str,
+                            'LASTFRAME': str,
+                        }  # , dtype=dtype_mapping Default to an empty dictionary if no mapping is provided
+                        self.selected_rows_remapped_df = pd.read_csv(latest_file_path, dtype=dtype_mapping)
 
                 except Exception as e:
                     print(f"Failed to load remapped file: {e}")  # Log failure, no disruptive messaging
@@ -922,7 +1546,8 @@ class RequestorUI(QWidget):
                     full_name, working_name = input_dialog.get_results()
 
                     # Add padded appendage to ensure a unique name
-                    working_name = self.add_padded_appendage(working_name, session_path)
+                    working_name = self.add_padded_appendage(working_name, session_path, source_type="directory")
+                    print("What name did i go for?", working_name)
 
                     # Create the new session
                     self.session_manager.add_new_session(self.client, self.project, self.recipient, working_name)
@@ -932,7 +1557,7 @@ class RequestorUI(QWidget):
                     self.select_list_item(self.session_selector, working_name)
             else:
                 # Existing session case
-                working_name = self.add_padded_appendage(result, session_path)
+                working_name = self.add_padded_appendage(result, session_path, source_type="directory")
                 self.session_manager.add_new_session(self.client, self.project, self.recipient, working_name)
                 self.populate_sessions()
                 self.select_list_item(self.session_selector, result)
@@ -951,7 +1576,7 @@ class RequestorUI(QWidget):
                 QMessageBox.warning(self, "Error", f"Failed to read requests.csv: {e}")
         else:
             # Default whitelist if no requests.csv exists
-            request_options = ["Bid Request", "Job files", "Additional data"]
+            request_options = ["bidRequest", "turnover", "reference", "editorial"]
 
         # Show the selection dialog
         dialog = ListInputDialog(self, "Select or Create New Request", request_options)
@@ -965,8 +1590,9 @@ class RequestorUI(QWidget):
                     full_name, working_name = input_dialog.get_results()
 
                     # Ensure the working name is unique with a padded appendage
-                    requests_dir = os.path.join(self.root_path, self.recipient, "sessions", self.session_name, "requests")
-                    working_name = self.add_padded_appendage(working_name, requests_dir)
+                    requests_dir = os.path.join(self.root_path, self.recipient, "sessions", self.session_name)
+                    working_name = self.add_padded_appendage(working_name, requests_dir, source_type="csv")
+                    
 
                     # Prompt for source_files_csv
                     source_file_path = self.prompt_source_file_path()
@@ -1006,9 +1632,9 @@ class RequestorUI(QWidget):
             return
 
         # Add padded appendage (for existing requests)
-        requests_dir = os.path.join(self.root_path, self.recipient, "sessions", self.session_name, "requests")
-        request_name = self.add_padded_appendage(request_name, requests_dir)
-
+        # print("this is the requests_dir debug: ", self.root_path, self.recipient, self.session_name)
+        requests_dir = os.path.join(self.root_path, self.recipient, "sessions", self.session_name)
+        request_name = self.add_padded_appendage(request_name, requests_dir, source_type="csv")
         # Prompt for source_files_csv (if not provided yet)
         source_file_path = self.prompt_source_file_path()
         if not source_file_path:
@@ -1043,22 +1669,32 @@ class RequestorUI(QWidget):
     def prompt_source_file_path(self) -> str:
         """Prompt the user to select or create a source file path."""
         source_dir = os.path.join(self.root_job_path, "fs_updates")
-        # print("Source directory for filesystem info files: ", source_dir)
-        os.makedirs(source_dir, exist_ok=True)  # Ensure the directory exists
+        # Ensure the directory exists
+        os.makedirs(source_dir, exist_ok=True)
 
         # Get the list of CSV files in the directory
-        options = [f for f in os.listdir(source_dir) if f.endswith(".csv")]
+        options = sorted([f for f in os.listdir(source_dir) if f.endswith(".csv")])
         options.append("New Scrape")  # Add the "New Scrape" option
 
         # Show the selection dialog
         dialog = ListInputDialog(self, "Select Source Files CSV", options)
         if dialog.exec() == QDialog.Accepted:
             selected = dialog.get_result()
-            
+
             # Handle "New Scrape" option
             if selected == "New Scrape":
+                # Wrap DirectoryLoaderUI in a QDialog
+                loader_dialog = QDialog(self)
+                loader_dialog.setWindowTitle("Directory Loader")
+                loader_dialog.resize(800, 1200)
+
                 loader = DirectoryLoaderUI(self.session_manager.root_directory, self.client, self.project)
-                if loader.exec() == QDialog.Accepted:  # Launch the directory loader
+                layout = QVBoxLayout(loader_dialog)
+                layout.addWidget(loader)
+                loader_dialog.setLayout(layout)
+
+                # Launch the DirectoryLoaderUI
+                if loader_dialog.exec() == QDialog.Accepted:
                     # Rebuild the options list and re-show the dialog if a new file was added
                     return self.prompt_source_file_path()
                 else:
@@ -1083,17 +1719,23 @@ class RequestorUI(QWidget):
         print("User canceled file selection dialog.")
         return None
 
-
     def prompt_provisioning_template_path(self) -> str:
         """Prompt the user to select or import a provisioning template."""
-        template_dir = os.path.join(self.project, "templates")
+        global_templates_dir = os.path.join(self.root_directory, "packaging", "global")
+        vendor_templates_dir = os.path.join(self.root_directory, "packaging", "vendor", self.recipient)
+        client_templates_dir = os.path.join(self.root_directory, "packaging", "client", self.client)
+        project_templates_dir = os.path.join(self.root_directory, "packaging", "client", self.client, self.project)
+        template_dir = os.path.join(self.root_job_path, "templates")
+        custom_templates_dir = ''
         print("templates are in this directory: ", template_dir)
         if not os.path.exists(template_dir):
             os.makedirs(template_dir)  # Create the directory if it doesn't exist
 
         # Get the list of CSV files in the directory
+        global_options = [f.name for f in Path(global_templates_dir).rglob("*.csv")]
         options = [f for f in os.listdir(template_dir) if f.endswith(".csv")]
-        options.append("Import Template")  # Add the "Import Template" option
+        options = options + global_options
+        options.append("Import Template")
 
         # Show the selection dialog
         dialog = ListInputDialog(self, "Select Provisioning Template CSV", options)
@@ -1108,43 +1750,76 @@ class RequestorUI(QWidget):
                     # Copy the selected file to the templates directory
                     new_file_path = os.path.join(template_dir, os.path.basename(file_path))
                     shutil.copyfile(file_path, new_file_path)
+                    print("copied: ", file_path, "  - to -  ", new_file_path)
                     return self.prompt_provisioning_template_path()  # Refresh and re-prompt
             else:
                 return os.path.join(template_dir, selected)
 
         return None  # User canceled the dialog
 
-    def add_padded_appendage(self, name: str, path: str) -> str:
+    def add_padded_appendage(self, name: str, path: str, source_type: str = "directory") -> str:
         """
-        Add a 3-padded numeric suffix to the name to ensure uniqueness within the specified path.
-        
+        Add a 3-padded numeric suffix to the name to ensure uniqueness.
+
         Args:
             name (str): The base name to append the padded suffix to.
-            path (str): The directory to check for existing names.
+            path (str): The directory or CSV file path to check for existing names.
+            source_type (str): Determines the source type to check for names:
+                            - 'directory': Check for existing items in the directory.
+                            - 'csv': Check for existing items in a CSV file.
 
         Returns:
             str: The unique name with a padded suffix.
         """
-        existing_names = []
-        # print("Have I been used?")
-        
-        # Gather all names in the directory (files and subdirectories treated equally)
-        if os.path.exists(path):
-            existing_names = [item.split("-")[0] for item in os.listdir(path)]
-            # print("Existing names in the path: ", existing_name)
+        print(f"Preparing to add appendage for: {name} in {path} using {source_type}")
 
-        # Extract the maximum existing padded number for this name
-        max_suffix = 0
-        for existing_name in existing_names:
-            if existing_name == name:
-                # Look for a numeric suffix in items that match the base name
-                parts = existing_name.rsplit("-", 1)
-                if len(parts) > 1 and parts[1].isdigit() and len(parts[1]) == 3:
-                    max_suffix = max(max_suffix, int(parts[1]))
+        max_suffix = 0  # Start with 0 to handle empty cases
 
-        # Generate the next padded number
+        if source_type == "directory":
+            # Ensure the directory exists
+            if not os.path.exists(path):
+                os.makedirs(path, exist_ok=True)
+
+            # List all items in the directory
+            existing_items = os.listdir(path)
+            print(f"Existing items: {existing_items}")
+
+            # Filter items starting with the name and having a numeric suffix
+            matching_items = [
+                item for item in existing_items if item.startswith(name) and '-' in item
+            ]
+            for item in matching_items:
+                try:
+                    suffix = int(item.rsplit('-', 1)[-1])
+                    max_suffix = max(max_suffix, suffix)
+                except ValueError:
+                    continue  # Skip items that don't end with a numeric suffix
+
+        elif source_type == "csv":
+            # Construct the path to the expected `_requests.csv` file
+            requests_csv = os.path.join(path, f"{self.session_name}_requests.csv")
+            if os.path.exists(requests_csv):
+                try:
+                    requests_df = pd.read_csv(requests_csv)
+                    if not requests_df.empty:
+                        # Extract the last entry and increment its numeric suffix
+                        last_item = requests_df.iloc[-1, 0]
+                        print(f"Last item in CSV: {last_item}")
+                        if '-' in last_item:
+                            suffix = int(last_item.rsplit('-', 1)[-1])
+                            max_suffix = max(max_suffix, suffix)
+                except Exception as e:
+                    print(f"Failed to read requests CSV: {e}")
+            else:
+                print(f"No requests CSV found at: {requests_csv}")
+
+        else:
+            raise ValueError(f"Invalid source_type: {source_type}. Must be 'directory' or 'csv'.")
+
+        # Increment and format the suffix
         new_suffix = max_suffix + 1
         unique_name = f"{name}-{new_suffix:03d}"
+        print(f"Unique name generated: {unique_name}")
 
         return unique_name
 
@@ -1157,6 +1832,26 @@ class RequestorUI(QWidget):
     def toggle_session_setup(self, checked):
         """Toggle the visibility of the session setup widget."""
         self.session_setup_widget.setVisible(checked)
+
+    def toggle_selected_rows_pane(self, checked):
+        """
+        Toggle the visibility of the selected_rows_pane_table.
+        """
+        self.selected_rows_pane_table.setVisible(checked)
+        if checked:
+            self.toggle_selected_rows_button.setText("Hide Selected Rows Pane")
+        else:
+            self.toggle_selected_rows_button.setText("Show Selected Rows Pane")
+
+    def toggle_preview_table(self, checked):
+        """
+        Toggle the visibility of the preview_table.
+        """
+        self.preview_table.setVisible(checked)
+        if checked:
+            self.toggle_preview_button.setText("Hide Preview Table")
+        else:
+            self.toggle_preview_button.setText("Show Preview Table")
 
     def load_file(self, file_path):
         
@@ -1181,108 +1876,6 @@ class RequestorUI(QWidget):
                 self.preview_data = pd.DataFrame([[text]], columns=['text'])
                 # self.column_list_widget.setVisible(False)
             # self.preview_display.setText(str(self.preview_data))
-
-    def process_remap(self, filter_parsed=True, filter_list=None, filter_mode="exclude", add_source="prepend"):
-        """
-        Process remapping based on selected rows and display results in preview pane.
-
-        Args:
-            filter_parsed (bool): Whether to filter parsed variables.
-            filter_list (list): List of variables to include or exclude during parsing.
-            filter_mode (str): "exclude" to remove variables in filter_list, "include" to keep only those in filter_list.
-            add_source (str): Whether to include columns from selected rows in the remapped DataFrame.
-                            Options are "no" (default), "prepend", "append".
-        """
-        if self.manager.selected_rows_df.empty:
-            QMessageBox.warning(self, "Warning", "Please select rows in the manager before remapping.")
-            return
-
-        remapped_data = []  # Store remapped rows for DataFrame creation
-
-        # Default filter list if none is provided
-        filter_list = filter_list or ["YYYYMMDD", "PKGVERSION3PADDED"]
-
-        # Check if DOTEXTENSION column exists in template_data
-        dotextension_present = "DOTEXTENSION" in self.template_data.columns
-
-        for _, selected_row in self.manager.selected_rows_df.iterrows():
-            # Extract DOTEXTENSION value if the column exists
-            dotextension_value = selected_row.get("DOTEXTENSION") if dotextension_present else None
-
-            # If DOTEXTENSION is not present or its value is missing, process all rows in template_data
-            if not dotextension_present or pd.isna(dotextension_value):
-                matching_template_rows = self.template_data
-            else:
-                # Filter `template_data` for rows matching DOTEXTENSION
-                matching_template_rows = self.template_data[self.template_data["DOTEXTENSION"] == dotextension_value]
-
-            if dotextension_present and matching_template_rows.empty:
-                remapped_data.append(selected_row.to_dict())
-                continue
-
-            # Extract selected columns from the selected row
-            if add_source in ["prepend", "append"]:
-                if self.selected_columns:
-                    source_columns = {col: selected_row[col] for col in self.selected_columns if col in selected_row.index}
-                else:
-                    source_columns = selected_row.to_dict()  # Include all columns if none are selected
-            else:
-                source_columns = {}  # No columns added if add_source is "no"
-
-            for _, template_row in matching_template_rows.iterrows():
-                row_as_text = " ".join(str(value) for value in template_row.values)
-
-                # Parse uppercase variables and optionally filter them
-                parsed_variables = self.payload_handler.parse(row_as_text, "uppercase")
-                if filter_parsed:
-                    if filter_mode == "exclude":
-                        parsed_variables = [var for var in parsed_variables if var not in filter_list]
-                    elif filter_mode == "include":
-                        parsed_variables = [var for var in parsed_variables if var in filter_list]
-
-                mappings = self.manager.map_requested_values(
-                    id_header=None,
-                    id_value=None,
-                    target_columns=parsed_variables,
-                    ignore_columns='',
-                    row_data=pd.DataFrame([selected_row]),
-                    remap_type="uppercase"
-                )
-                # print("mappings returned: ")
-                # print(mappings)
-
-                # Create a mapping dictionary for efficient replacement
-                mapping_dict = mappings # {original: replacement for original, replacement in mappings if replacement.strip()}
-                # print("mapping_dict: ")
-                # print(mapping_dict)
-
-                # Intelligent reintegration based on parsed variables
-                replaced_row_as_text = self.reintegrate_using_parser(row_as_text, parsed_variables, mapping_dict)
-
-                # Convert modified text back to a DataFrame row
-                remapped_row = {
-                    col: val
-                    for col, val in zip(template_row.index, replaced_row_as_text.split())
-                }
-
-                # Add the selected columns to the remapped row based on `add_source`
-                if add_source == "prepend":
-                    remapped_row_with_context = {**source_columns, **remapped_row}
-                elif add_source == "append":
-                    remapped_row_with_context = {**remapped_row, **source_columns}
-                else:
-                    remapped_row_with_context = remapped_row  # No additional columns
-
-                remapped_data.append(remapped_row_with_context)
-
-        # Create `selected_rows_remapped_df` from remapped data
-        self.selected_rows_remapped_df = pd.DataFrame(remapped_data)
-
-        # Update the preview table
-        if self.selected_rows_remapped_df.empty:
-            QMessageBox.warning(self, "No Data", "No remapped results to display.")
-        else:
-            self.update_preview_table(self.selected_rows_remapped_df)
 
     def reintegrate_using_parser(self, text, parsed_variables, mapping_dict):
         """
@@ -1347,6 +1940,270 @@ class RequestorUI(QWidget):
         
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save file: {str(e)}")
+
+class SessionManager:
+    def __init__(self, root_directory):
+        self.root_directory = os.path.expanduser(root_directory)
+        self.session_csv = os.path.join(self.root_directory, "sessions.csv")
+        print(self.session_csv)
+
+        # Ensure the session CSV exists
+        if not os.path.exists(self.session_csv):
+            pd.DataFrame(columns=["session_name"]).to_csv(self.session_csv, index=False)
+
+    def get_clients(self):
+        return [d for d in os.listdir(self.root_directory) if os.path.isdir(os.path.join(self.root_directory, d))]
+
+    def get_projects(self, client):
+        self.client_path = os.path.join(self.root_directory, client)
+        return [d for d in os.listdir(self.client_path) if os.path.isdir(os.path.join(self.client_path, d))]
+
+    def get_recipients(self, client, project):
+        project_path = os.path.join(self.root_directory, client, project, "packaging")
+        os.makedirs(project_path, exist_ok=True)  # Ensure the "packaging" directory exists
+        return [d for d in os.listdir(project_path) if os.path.isdir(os.path.join(project_path, d))]
+
+    def get_sessions(self, client, project, recipient):
+        recipient_path = os.path.join(self.root_directory, client, project, "packaging", recipient, "sessions")
+        os.makedirs(recipient_path, exist_ok=True)  # Ensure the "sessions" directory exists
+        return [d for d in os.listdir(recipient_path) if os.path.isdir(os.path.join(recipient_path, d))]
+
+    def get_requests(self, client, project, recipient, session_name):
+        """
+        Get the list of requests and also prepare a DataFrame for saved session files.
+
+        Parameters:
+            client (str): Client name.
+            project (str): Project name.
+            recipient (str): Recipient name.
+            session_name (str): Session name.
+
+        Returns:
+            List[str]: List of request names from the CSV file.
+        """
+        session_dir = os.path.join(self.root_directory, client, project, "packaging", recipient, "sessions", session_name)
+        requests_file = os.path.join(session_dir, f"{session_name}_requests.csv")
+
+        # Initialize storage for session files and latest session file
+        self.session_files = []  # Store all session CSV files
+        self.latest_session_file = None  # Store the latest session file
+
+        # Step 1: Get timestamped session files
+        if os.path.exists(session_dir):
+            session_files = [
+                file for file in os.listdir(session_dir)
+                if re.match(r".+-\d{14}\.csv", file)  # Match timestamped session files
+            ]
+            self.session_files = sorted(session_files)  # Store sorted list of session files
+
+            if self.session_files:
+                self.latest_session_file = self.session_files[-1]  # The latest session file (last in sorted order)
+
+            # Create a DataFrame for saved session files
+            file_data = [
+                {
+                    "file_name": file,
+                    "file_path": os.path.join(session_dir, file),
+                    "is_latest": file == self.latest_session_file
+                }
+                for file in self.session_files
+            ]
+            self.saved_session_files_df = pd.DataFrame(file_data, columns=["file_name", "file_path", "is_latest"])
+        else:
+            # Initialize an empty DataFrame if no session files exist
+            self.saved_session_files_df = pd.DataFrame(columns=["file_name", "file_path", "is_latest"])
+
+        # Step 2: Get requests from the CSV
+        if not os.path.exists(requests_file):
+            return []  # Return an empty list if the requests file does not exist
+
+        try:
+            requests_df = pd.read_csv(requests_file)
+            return requests_df['request_name'].tolist()  # Return request names from the CSV
+        except Exception as e:
+            raise IOError(f"Failed to read requests file: {str(e)}")
+
+    def create_directory_structure(self, client, project, recipient, session_name):
+        """Ensure directory structure is in place for a new session."""
+        path = os.path.join(self.root_directory, client, project, "packaging", recipient, "sessions", session_name)
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def handle_new_item(self, parent_widget, dropdown, type_label, create_func):
+        """Handles the creation of a new item for a dropdown."""
+        new_item_text, ok = QInputDialog.getText(
+            parent_widget, f"New {type_label}", f"Enter a new {type_label}:"
+        )
+        if not ok or not new_item_text.strip():  # Ensure the dialog wasn't canceled and input is not empty
+            print(f"No action taken for {type_label}.")  # Debug log
+            return  # Do nothing if canceled
+        new_item_text = new_item_text.strip()
+
+        # Create the new item in the session manager
+        create_func(new_item_text)
+
+        # Add the new item to the dropdown
+        new_item = QListWidgetItem(new_item_text)
+        dropdown.addItem(new_item.text())  # Add the item as text
+        matching_items = dropdown.findItems(new_item_text, Qt.MatchExactly)
+
+        if matching_items:  # Ensure we match the new item
+            dropdown.setCurrentItem(matching_items[0])  # Set the new item as selected
+
+    def add_new_client(self, client):
+        self.client = client
+        client_path = os.path.join(self.root_directory, client)
+        os.makedirs(client_path, exist_ok=True)
+
+    def add_new_project(self, client, project):
+        self.project = project
+        job_path = os.path.join(self.root_directory, client, project)
+        
+        project_path = os.path.join(self.root_directory, client, project, "packaging", "client")
+        os.makedirs(project_path, exist_ok=True)
+
+        shots_file = os.path.join(job_path, "shots.csv")
+        if not os.path.exists(shots_file):
+            df = pd.DataFrame(columns=["SHOTNAME", "ALTSHOTNAME", "FIRSTFRAME", "LASTFRAME"])
+            df.to_csv(shots_file, index=False)
+
+    def add_new_recipient(self, client, project, recipient_name):
+        self.recipient = recipient_name
+        vendor_path = os.path.join(self.root_directory, client, project, "packaging", recipient_name)
+        recipient_path = os.path.join(self.root_directory, "vendors", recipient_name, project)
+        os.makedirs(recipient_path, exist_ok=True)
+        self.create_relative_symlink(recipient_path, vendor_path)
+
+    def add_new_session(self, client, project, recipient, session_name):
+        self.session_name = session_name
+        session_path = os.path.join(self.root_directory, client, project, "packaging", recipient, "sessions", session_name)
+        session_requests_path = os.path.join(session_path, "requests")
+        os.makedirs(session_path, exist_ok=True)
+        os.makedirs(session_requests_path, exist_ok=True)
+
+    def add_new_request(self, client, project, recipient, session_name, request_name, source_csv_path, provisioning_template_path):
+        """
+        Create a new request directory and populate it with the necessary files.
+
+        Parameters:
+        - client (str): Client name.
+        - project (str): Project name.
+        - recipient (str): Recipient name.
+        - session_name (str): Session name.
+        - request_name (str): Request name.
+        - source_csv_path (str): Path to the source files CSV.
+        - provisioning_template_path (str): Path to the provisioning template CSV.
+        """
+        session_dir = os.path.join(
+            self.root_directory, client, project, "packaging", recipient, "sessions", session_name
+        )
+        requests_dir = os.path.join(session_dir, "requests")
+        os.makedirs(requests_dir, exist_ok=True)
+
+        # Copy and rename the source files CSV
+        source_file_target = os.path.join(requests_dir, f"{request_name}_source_files.csv")
+        try:
+            shutil.copyfile(source_csv_path, source_file_target)
+        except Exception as e:
+            raise IOError(f"Failed to copy Source Files CSV: {str(e)}")
+
+        # Copy and rename the provisioning template
+        provisioning_file_target = os.path.join(requests_dir, f"{request_name}_provisioning_template.csv")
+        try:
+            shutil.copyfile(provisioning_template_path, provisioning_file_target)
+        except Exception as e:
+            raise IOError(f"Failed to copy Provisioning Template CSV: {str(e)}")
+
+        # Append the request_name to the {session_name}_requests.csv file
+        requests_file = os.path.join(session_dir, f"{session_name}_requests.csv")
+        try:
+            if os.path.exists(requests_file):
+                # If the file exists, read it
+                requests_df = pd.read_csv(requests_file)
+            else:
+                # If the file does not exist, create a new DataFrame
+                requests_df = pd.DataFrame(columns=["request_name"])
+            
+            # Append the new request_name
+            requests_df = pd.concat([requests_df, pd.DataFrame({"request_name": [request_name]})], ignore_index=True)
+            
+            # Filter for unique entries
+            requests_df = requests_df.drop_duplicates(subset=["request_name"], keep="first")
+
+            # Save the updated DataFrame back to the CSV
+            requests_df.to_csv(requests_file, index=False)
+        except Exception as e:
+            raise IOError(f"Failed to update requests file: {str(e)}")
+
+        print(f"New request, {request_name}, created for {session_name} session")
+
+    def retire_request(self, client, project, recipient, session_name, request_name):
+        """
+        Retires all files matching `{request_name}*` by moving them to a 'retired' subdirectory
+        and removes the request entry from `{session_name}_requests.csv`.
+
+        Parameters:
+            client (str): Client name.
+            project (str): Project name.
+            recipient (str): Recipient name.
+            session_name (str): Session name.
+            request_name (str): Request name to retire.
+
+        Returns:
+            int: Number of files moved.
+        """
+        # Get the current requests directory
+        requests_dir = os.path.join(
+            self.root_directory, client, project, "packaging", recipient, "sessions", session_name, "requests"
+        )
+        retired_dir = os.path.join(requests_dir, "retired")
+        os.makedirs(retired_dir, exist_ok=True)  # Create the retired directory if it doesn't exist
+
+        # Use glob to find all files matching the pattern `{request_name}*`
+        pattern = os.path.join(requests_dir, f"{request_name}*")
+        matching_files = glob(pattern)
+
+        # Move each matching file to the 'retired' subdirectory
+        for file_path in matching_files:
+            shutil.move(file_path, os.path.join(retired_dir, os.path.basename(file_path)))
+
+        # Remove the request entry from `{session_name}_requests.csv`
+        session_dir = os.path.join(
+            self.root_directory, client, project, "packaging", recipient, "sessions", session_name
+        )
+        requests_file = os.path.join(session_dir, f"{session_name}_requests.csv")
+
+        try:
+            # Load the CSV file
+            if os.path.exists(requests_file):
+                requests_df = pd.read_csv(requests_file)
+
+                # Remove the row corresponding to `request_name`
+                filtered_df = requests_df[requests_df['request_name'] != request_name]
+
+                # Save the updated DataFrame back to the CSV
+                filtered_df.to_csv(requests_file, index=False)
+            else:
+                raise FileNotFoundError(f"{requests_file} does not exist.")
+        except Exception as e:
+            raise IOError(f"Failed to update {requests_file}: {str(e)}")
+
+        return len(matching_files)
+
+    def create_relative_symlink(self, target, link_name):
+        """
+        Create a relative symbolic link pointing to 'target' named 'link_name'.
+        """
+        # Resolve the absolute paths
+        target_path = Path(target).resolve()
+        link_path = Path(link_name).resolve()
+
+        # Compute the relative path from the link to the target
+        relative_target = os.path.relpath(target_path, link_path.parent)
+
+        # Create the symbolic link
+        os.symlink(relative_target, link_path)
+        print(f"Created symlink: {link_path} -> {relative_target}")
 
 class ListInputDialog(QDialog):
     def __init__(self, parent, title, options, key_value_mode=False):
@@ -1481,177 +2338,55 @@ class DualInputDialog(QDialog):
         """Return the Full Name and Working Name."""
         return self.full_name_input.text().strip(), self.working_name_input.text().strip()
 
-class SessionManager:
-    def __init__(self, root_directory):
-        self.root_directory = os.path.expanduser(root_directory)
-        self.session_csv = os.path.join(self.root_directory, "sessions.csv")
+class PathConfirmationDialog(QDialog):
+    def __init__(self, initial_path, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Confirm Recipient Path")
+        self.selected_path = initial_path  # Initialize with the given path
+        self.resize(800, 150)
 
-        # Ensure the session CSV exists
-        if not os.path.exists(self.session_csv):
-            pd.DataFrame(columns=["session_name"]).to_csv(self.session_csv, index=False)
+        # Layouts
+        main_layout = QVBoxLayout(self)
+        input_layout = QHBoxLayout()
 
-    def get_clients(self):
-        return [d for d in os.listdir(self.root_directory) if os.path.isdir(os.path.join(self.root_directory, d))]
+        # Widgets
+        self.label = QLabel("Confirm or edit the recipient path:")
+        self.path_edit = QLineEdit(self.selected_path)
+        self.browse_button = QPushButton("Browse...")
+        self.confirm_button = QPushButton("Confirm")
+        self.cancel_button = QPushButton("Cancel")
 
-    def get_projects(self, client):
-        client_path = os.path.join(self.root_directory, client)
-        return [d for d in os.listdir(client_path) if os.path.isdir(os.path.join(client_path, d))]
+        # Add widgets to layouts
+        input_layout.addWidget(self.path_edit)
+        input_layout.addWidget(self.browse_button)
 
-    def get_recipients(self, client, project):
-        project_path = os.path.join(self.root_directory, client, project, "packaging")
-        os.makedirs(project_path, exist_ok=True)  # Ensure the "packaging" directory exists
-        return [d for d in os.listdir(project_path) if os.path.isdir(os.path.join(project_path, d))]
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.confirm_button)
+        button_layout.addWidget(self.cancel_button)
 
-    def get_sessions(self, client, project, recipient):
-        recipient_path = os.path.join(self.root_directory, client, project, "packaging", recipient, "sessions")
-        os.makedirs(recipient_path, exist_ok=True)  # Ensure the "sessions" directory exists
-        return [d for d in os.listdir(recipient_path) if os.path.isdir(os.path.join(recipient_path, d))]
+        main_layout.addWidget(self.label)
+        main_layout.addLayout(input_layout)
+        main_layout.addLayout(button_layout)
 
-    def get_requests(self, client, project, recipient, session_name):
-        """
-        Get the list of requests from the {session_name}_requests.csv file.
+        # Connect signals
+        self.browse_button.clicked.connect(self.open_file_browser)
+        self.confirm_button.clicked.connect(self.confirm_path)
+        self.cancel_button.clicked.connect(self.reject)
 
-        Parameters:
-        - client (str): Client name.
-        - project (str): Project name.
-        - recipient (str): Recipient name.
-        - session_name (str): Session name.
+    def open_file_browser(self):
+        """Open a file browser to select a directory."""
+        new_path = QFileDialog.getExistingDirectory(self, "Select Directory", self.selected_path)
+        if new_path:  # If a valid directory is selected, update the path
+            self.path_edit.setText(new_path)
 
-        Returns:
-        - List[str]: List of request names from the CSV file.
-        """
-        session_dir = os.path.join(self.root_directory, client, project, "packaging", recipient, "sessions", session_name)
-        requests_file = os.path.join(session_dir, f"{session_name}_requests.csv")
-        
-        if not os.path.exists(requests_file):
-            return []  # Return an empty list if the file does not exist
+    def confirm_path(self):
+        """Confirm the selected path and close the dialog."""
+        self.selected_path = self.path_edit.text().strip()
+        if not self.selected_path:
+            QMessageBox.warning(self, "Invalid Path", "The path cannot be empty.")
+            return
+        self.accept()  # Close the dialog with QDialog.Accepted
 
-        try:
-            requests_df = pd.read_csv(requests_file)
-            return requests_df['request_name'].tolist()
-        except Exception as e:
-            raise IOError(f"Failed to read requests file: {str(e)}")
-
-    def create_directory_structure(self, client, project, recipient, session_name):
-        """Ensure directory structure is in place for a new session."""
-        path = os.path.join(self.root_directory, client, project, "packaging", recipient, "sessions", session_name)
-        os.makedirs(path, exist_ok=True)
-        return path
-
-    def handle_new_item(self, parent_widget, dropdown, type_label, create_func):
-        """Handles the creation of a new item for a dropdown."""
-        new_item_text, ok = QInputDialog.getText(
-            parent_widget, f"New {type_label}", f"Enter a new {type_label}:"
-        )
-        if not ok or not new_item_text.strip():  # Ensure the dialog wasn't canceled and input is not empty
-            print(f"No action taken for {type_label}.")  # Debug log
-            return  # Do nothing if canceled
-        new_item_text = new_item_text.strip()
-
-        # Create the new item in the session manager
-        create_func(new_item_text)
-
-        # Add the new item to the dropdown
-        new_item = QListWidgetItem(new_item_text)
-        dropdown.addItem(new_item.text())  # Add the item as text
-        matching_items = dropdown.findItems(new_item_text, Qt.MatchExactly)
-
-        if matching_items:  # Ensure we match the new item
-            dropdown.setCurrentItem(matching_items[0])  # Set the new item as selected
-
-    def add_new_client(self, client):
-        self.client = client
-        client_path = os.path.join(self.root_directory, client)
-        os.makedirs(client_path, exist_ok=True)
-
-    def add_new_project(self, client, project):
-        self.project = project
-        project_path = os.path.join(self.root_directory, client, project, "packaging", "client")
-        os.makedirs(project_path, exist_ok=True)
-
-    def add_new_recipient(self, client, project, recipient_name):
-        self.recipient = recipient_name
-        vendor_path = os.path.join(self.root_directory, client, project, "packaging", recipient_name)
-        recipient_path = os.path.join(self.root_directory, "vendors", recipient_name, project)
-        os.makedirs(recipient_path, exist_ok=True)
-        self.create_relative_symlink(recipient_path, vendor_path)
-
-    def add_new_session(self, client, project, recipient, session_name):
-        self.session_name = session_name
-        session_path = os.path.join(self.root_directory, client, project, "packaging", recipient, "sessions", session_name)
-        os.makedirs(session_path, exist_ok=True)
-
-    def add_new_request(self, client, project, recipient, session_name, request_name, source_csv_path, provisioning_template_path):
-        """
-        Create a new request directory and populate it with the necessary files.
-
-        Parameters:
-        - client (str): Client name.
-        - project (str): Project name.
-        - recipient (str): Recipient name.
-        - session_name (str): Session name.
-        - request_name (str): Request name.
-        - source_csv_path (str): Path to the source files CSV.
-        - provisioning_template_path (str): Path to the provisioning template CSV.
-        """
-        session_dir = os.path.join(
-            self.root_directory, client, project, "packaging", recipient, "sessions", session_name
-        )
-        requests_dir = os.path.join(session_dir, "requests")
-        os.makedirs(requests_dir, exist_ok=True)
-
-        # Copy and rename the source files CSV
-        source_file_target = os.path.join(requests_dir, f"{request_name}_source_files.csv")
-        try:
-            shutil.copyfile(source_csv_path, source_file_target)
-        except Exception as e:
-            raise IOError(f"Failed to copy Source Files CSV: {str(e)}")
-
-        # Copy and rename the provisioning template
-        provisioning_file_target = os.path.join(requests_dir, f"{request_name}_provisioning_template.csv")
-        try:
-            shutil.copyfile(provisioning_template_path, provisioning_file_target)
-        except Exception as e:
-            raise IOError(f"Failed to copy Provisioning Template CSV: {str(e)}")
-
-        # Append the request_name to the {session_name}_requests.csv file
-        requests_file = os.path.join(session_dir, f"{session_name}_requests.csv")
-        try:
-            if os.path.exists(requests_file):
-                # If the file exists, read it
-                requests_df = pd.read_csv(requests_file)
-            else:
-                # If the file does not exist, create a new DataFrame
-                requests_df = pd.DataFrame(columns=["request_name"])
-            
-            # Append the new request_name
-            requests_df = pd.concat([requests_df, pd.DataFrame({"request_name": [request_name]})], ignore_index=True)
-            
-            # Filter for unique entries
-            requests_df = requests_df.drop_duplicates(subset=["request_name"], keep="first")
-
-            # Save the updated DataFrame back to the CSV
-            requests_df.to_csv(requests_file, index=False)
-        except Exception as e:
-            raise IOError(f"Failed to update requests file: {str(e)}")
-
-        print(f"New request, {request_name}, created for {session_name} session")
-
-    def create_relative_symlink(self, target, link_name):
-        """
-        Create a relative symbolic link pointing to 'target' named 'link_name'.
-        """
-        # Resolve the absolute paths
-        target_path = Path(target).resolve()
-        link_path = Path(link_name).resolve()
-
-        # Compute the relative path from the link to the target
-        relative_target = os.path.relpath(target_path, link_path.parent)
-
-        # Create the symbolic link
-        os.symlink(relative_target, link_path)
-        print(f"Created symlink: {link_path} -> {relative_target}")
-    
 class OutputManager:
     def __init__(self):
         self.format_handlers = {
@@ -1726,15 +2461,51 @@ class PayloadHandler:
         self.delimiters = ['-', '_', '.', '/', ':', '\\']
 
     def chunk_data(self, data, columns=None):
+        """
+        Iterates over rows in a DataFrame or plain text, limiting processing to specified columns.
+
+        Args:
+            data (DataFrame or str): The data to process.
+            columns (list, optional): The columns to process if the data is a DataFrame.
+
+        Yields:
+            str: Processed row or text chunk as a single string.
+        """
         if isinstance(data, pd.DataFrame):
-            # Select specified columns, or use all columns if none are specified
+            # Use specified columns, or default to all columns
             data = data[columns] if columns else data
             for _, row in data.iterrows():
-                # Yield each field as a full string without using to_string()
                 yield " ".join(str(value) for value in row.values)
         else:
-            # Handle plain text data for non-CSV files
+            # Handle plain text input
             yield data
+
+    def parse(self, data, parse_type, columns=None):
+        """
+        Routes data chunks to the appropriate parser based on the parse_type.
+
+        Args:
+            data: The data to parse (DataFrame or string).
+            parse_type (str): The type of parsing to perform.
+            columns (list, optional): Specific columns to process if the data is a DataFrame.
+
+        Returns:
+            list: The parsed results.
+        """
+        chunks = self.chunk_data(data, columns=columns)
+        results = []
+
+        for chunk in chunks:
+            if parse_type == "uppercase":
+                results.extend(Parsers.extract_uppercase(chunk, self.delimiters))
+            elif parse_type == "path":
+                results.extend(Parsers.extract_paths(chunk))
+            elif parse_type == "raw_item_name":
+                results.extend(Parsers.extract_raw_item_names(chunk))
+            else:
+                raise ValueError(f"Unknown parse_type: {parse_type}")
+
+        return results
 
     def reintegrate(self, processed_chunks, original_data):
         """
@@ -1769,17 +2540,6 @@ class PayloadHandler:
 
         # Convert the reintegrated rows back into a DataFrame
         return pd.DataFrame(reintegrated_rows)
-
-    def parse(self, chunk, parse_type):
-        """Route to the appropriate parser based on the parse_type."""
-        if parse_type == "uppercase":
-            return Parsers.extract_uppercase(chunk, self.delimiters)
-        elif parse_type == "path":
-            return Parsers.extract_paths(chunk)
-        elif parse_type == "raw_item_name":
-            return Parsers.extract_raw_item_names(chunk)  # New functionality for raw_item_name
-        else:
-            raise ValueError(f"Unknown parse_type: {parse_type}")
 
 class Parsers:
     @staticmethod
@@ -1850,8 +2610,9 @@ class MappingRequestor:
     def map(self, parsed_strings, id_header, id_value, target_columns):
         self.string_mapper.set_mapping_context(id_header, id_value, target_columns)
         return [self.string_mapper.map_requested_values(string) for string in parsed_strings]
-    
+
 if __name__ == "__main__":
+
     app = QApplication(sys.argv)
     coordinator = RequestorUI()
     coordinator.show()

@@ -415,3 +415,42 @@ def set_root_for_os(path):
         path = Path(path)
 
     return path
+
+def set_a_render_root_for_os(path):
+    # Determine if the original path is a Path object
+    original_is_path = isinstance(path, Path)
+    
+    # Convert path to string for processing if it's a Path object
+    if original_is_path:
+        path = str(path)
+    
+    # print("Converted path to string: ", path)
+
+    # Define the OS-specific root paths
+    paths = {
+        'Windows': 'R:/',
+        'Linux': '/mnt/deadline-london/',
+        'Darwin': '/Volumes/deadline-london/'
+    }
+    
+    # Detect the current OS
+    current_os = platform.system()
+    # print("Current OS: ", current_os)
+
+    # Define what the current path should be replaced with
+    current_path_prefix = paths[current_os]
+    # print("Current path prefix for replacement: ", current_path_prefix)
+
+    # Replace paths from other OSs with the current OS's path prefix
+    for os, os_path in paths.items():
+        if os != current_os:
+            path = path.replace(os_path, current_path_prefix)
+            # print(f"Replacing {os_path} with {current_path_prefix}")
+
+    # print("Final path after replacements: ", path)
+
+    # Convert back to Path if the original was a Path object
+    if original_is_path:
+        path = Path(path)
+
+    return path

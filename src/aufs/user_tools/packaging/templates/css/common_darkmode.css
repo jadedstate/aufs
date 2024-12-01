@@ -1,0 +1,53 @@
+/* Dark mode CSS */
+body {
+    background-color: #111111;
+    color: #E0E0E0;
+    font-family: Arial, sans-serif;
+}
+
+a {
+    color: #BB86FC;
+}
+
+a:hover {
+    color: #f3a1a1;
+}
+
+button {
+    background-color: #333333;
+    color: #FFFFFF;
+    border: none;
+    padding: 10px 20px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 16px;
+    margin: 4px 2px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+button:hover {
+    background-color: #575757;
+}
+
+input[type="text"],
+select,
+textarea {
+    width: 100%;
+    padding: 12px;
+    /* border: 1px solid #414141; */
+    /* border-radius: 4px; */
+    box-sizing: border-box;
+    margin-top: 6px;
+    margin-bottom: 16px;
+    resize: vertical;
+    background-color: #333;
+    color: #ffffff;
+}
+
+input[type="text"]:focus,
+select:focus,
+textarea:focus {
+    background-color: #454545;
+}

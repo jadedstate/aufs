@@ -92,6 +92,50 @@ class StringMappingManager(QWidget):
         if self.csv_path:
             self.load_csv()
 
+    def map_requested_values(self, id_header, id_value, target_columns, virtual_headers, ignore_columns, use_dialog, root_job_path=None, row_data=None, remap_type='string', use_custom_remapper=True):
+        """
+        Perform remapping with optional row_data and remap_type arguments.
+
+        Parameters:
+        - id_header (str): The column header to match.
+        - id_value (str): The ID value to find in the specified header column.
+        - target_columns (list): List of columns to remap.
+        - row_data (pd.Series): Optional row data to pass directly to the remapper.
+        - remap_type (str): Optional remap type to specify how remapping is handled.
+
+        Returns:
+        - list: Result of the remapping operation.
+        """
+        if not target_columns:
+            QMessageBox.warning(self, "Input Error", "Please fill in all fields.")
+            return
+
+        # Fetch the latest mappings DataFrame from DeepEditor and set it in StringRemapper
+        mappings_df = self.deep_editor.model.get_dataframe()
+        if mappings_df is not None:
+            self.remapper.set_mappings(mappings_df)
+        else:
+            QMessageBox.critical(self, "Error", "Failed to retrieve mappings DataFrame.")
+            return
+
+        # Perform remapping and display results
+        try:
+            result = self.remapper.remap(id_header,
+                                         id_value,
+                                         target_columns,
+                                         virtual_headers,
+                                         row_data=row_data,
+                                         remap_type=remap_type,
+                                         use_custom_remapper=use_custom_remapper,
+                                         ignore_columns=ignore_columns,
+                                         use_dialog=use_dialog,
+                                         root_job_path=root_job_path                                         
+                                         )
+            # self.display_results(result)
+            return result
+        except Exception as e:
+            QMessageBox.critical(self, "Remap Error", f"Failed to remap values: {str(e)}")
+
     def initialize_manager_with_csv(self, csv_path, root_path=None, recipient=None, user=None, load_all=False):
         """
         Reinitialize the manager with a new CSV file and optional context.
@@ -220,48 +264,6 @@ class StringMappingManager(QWidget):
         """Clear selected rows DataFrame."""
         self.selected_rows_df = pd.DataFrame()
         self.results_display.setText("Selected rows cleared.")
-
-    def display_results(self, results):
-        """Display the remapping results in the text area."""
-        if not results:
-            self.results_display.setText("No mapping found for the given inputs.")
-        else:
-            result_text = "\n".join([f"{col}: {value}" for col, value in results])
-            self.results_display.setText(result_text)
-
-    def map_requested_values(self, id_header, id_value, target_columns, ignore_columns, row_data=None, remap_type='string'):
-        """
-        Perform remapping with optional row_data and remap_type arguments.
-
-        Parameters:
-        - id_header (str): The column header to match.
-        - id_value (str): The ID value to find in the specified header column.
-        - target_columns (list): List of columns to remap.
-        - row_data (pd.Series): Optional row data to pass directly to the remapper.
-        - remap_type (str): Optional remap type to specify how remapping is handled.
-
-        Returns:
-        - list: Result of the remapping operation.
-        """
-        if not target_columns:
-            QMessageBox.warning(self, "Input Error", "Please fill in all fields.")
-            return
-
-        # Fetch the latest mappings DataFrame from DeepEditor and set it in StringRemapper
-        mappings_df = self.deep_editor.model.get_dataframe()
-        if mappings_df is not None:
-            self.remapper.set_mappings(mappings_df)
-        else:
-            QMessageBox.critical(self, "Error", "Failed to retrieve mappings DataFrame.")
-            return
-
-        # Perform remapping and display results
-        try:
-            result = self.remapper.remap(id_header, id_value, target_columns, row_data=row_data, remap_type=remap_type, ignore_columns=ignore_columns)
-            # self.display_results(result)
-            return result
-        except Exception as e:
-            QMessageBox.critical(self, "Remap Error", f"Failed to remap values: {str(e)}")
 
     def finalize_logging(self):
         """Trigger logging of all final versions after remapping."""

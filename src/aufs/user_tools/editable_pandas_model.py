@@ -1,3 +1,5 @@
+# src/aufs/user_tools/editable_pandas_model.py
+
 import pandas as pd
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QMimeData
 from PySide6.QtWidgets import QMessageBox, QComboBox, QTableView, QMenu, QAbstractItemView
@@ -20,22 +22,34 @@ class EditablePandasModel(QAbstractTableModel):
             self.column_widths = {}
 
     def get_column_widths(self):
-        """Calculate and return optimal column widths only if auto_fit_columns is True."""
-        if not self.auto_fit_columns:  # Guard clause for backward compatibility
+        """Calculate and return optimal column widths."""
+        if not self.auto_fit_columns:
             return {}
 
         column_widths = {}
         if not self._dataframe.empty:
             for column in range(self.columnCount()):
-                # Calculate maximum content width
-                content_width = max(
-                    len(str(self._dataframe.iloc[row, column])) for row in range(self.rowCount())
-                )
+                # Get the column name
+                column_name = self._dataframe.columns[column]
+
+                # If column has dropdown values, only consider the first value (selected item)
+                if column_name in self.value_options:
+                    max_content_width = max(
+                        len(str(value.split(", ")[0]))  # Only use the selected value (first item)
+                        for value in self._dataframe[column_name]
+                    )
+                else:
+                    # Default calculation for non-dropdown columns
+                    max_content_width = max(
+                        len(str(self._dataframe.iloc[row, column]))
+                        for row in range(self.rowCount())
+                    )
+
                 # Include header width
                 header_width = len(str(self._dataframe.columns[column]))
-                # Determine the optimal width with padding
-                optimal_width = max(content_width, header_width) * 8 + 0  # Scale and add padding
+                optimal_width = max(max_content_width, header_width) * 8 + 10  # Scale and add padding
                 column_widths[column] = optimal_width
+
         return column_widths
 
     def adjust_column_widths(self):
@@ -76,7 +90,7 @@ class EditablePandasModel(QAbstractTableModel):
         Applies calculated column widths to the given QTableView if auto-fit is enabled.
         """
         if not self.auto_fit_columns:
-            print("Auto-fit columns is disabled.")
+            # print("Auto-fit columns is disabled.")
             return
 
         if not view:

@@ -1,0 +1,160 @@
+#statusIndicator {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    padding: 10px;
+    background-color: #444; /* Dark background for the container */
+    color: white;
+    border-radius: 5px;
+    display: flex;  /* Aligns children elements in a row or column */
+    flex-direction: column;  /* Stack children vertically */
+    z-index: -100;
+}
+
+#FrontendStatusIndicator, #BackendStatusIndicator {
+    flex: 1;  /* Each takes up equal space within the container */
+    padding: 5px;
+    border-radius: 5px;
+    margin: 2px; /* Adds a small gap between the indicators */
+}
+
+.backendFlaskonline, .frontendFlaskonline {
+    background-color: green;
+}
+
+.backendFlaskoffline, .frontendFlaskoffline {
+    background-color: red;
+}
+
+.dropdown-select {
+    width: auto;
+    /* height: 40px; */
+    font-size: 16px;
+}
+.btn-gridGroup-grey1-bg {
+    background-color: #4e4d4d !important;
+    color: #c0bdbd !important;
+    font-weight: bold;
+    border-style: inset !important;
+    border-color: #4b4b4b;
+    border-width: thin !important;
+}
+.btn-gridGroup-pink1-bg {
+    background-color: #4e4d4d !important;
+    color: #6cf1e2 !important;
+    font-weight: bold;
+    border-style: solid !important;
+    border-color: #4b4b4b;
+    border-width: thin !important;
+}
+.btn-gridFilter-shot1 {
+    background-color: #4a4a4e !important;
+    color: #ffd900;
+    font-size: 18px;
+    font-weight: bold;
+    border-style: solid !important;
+    border-color: #a4a1005d;
+    border-width: medium !important;
+}
+.btn-gridFilter-shot2 {
+    background-color: #437eff !important;
+    color: #303030 !important;
+    font-size: 18px;
+    font-weight: bold;
+    border-style: inset !important;
+    border-color: #0c53a3;
+    border-width: thin !important;
+}
+    
+    
+/* colour buttons */
+.btn-green1-bg {
+    /* background-color: #4CAF50 !important; */
+    color: #4CAF50 !important;
+    /* font-weight: bold; */
+    border-style: solid !important;
+    border-color: #4b4b4b;
+    border-width: thin !important;
+}
+.btn-green2-bg {
+    /* background-color: #4CAF50 !important; */
+    color: #70fd12 !important;
+    /* font-weight: bold; */
+    border-style: solid !important;
+    border-color: #4b4b4b;
+    border-width: thin !important;
+}
+.btn-blue1-bg {
+    /* background-color: #4370eb !important; */
+    color: #4370eb !important;
+    /* font-weight: bold; */
+    border-style: solid !important;
+        border-color: #4b4b4b;
+    border-width: thin !important;
+}
+.btn-blue2-bg {
+    /* background-color: #5d82de !important; */
+    color: #3884ff !important;
+    /* font-weight: bold; */
+    border-style: solid !important;
+    border-color: #4b4b4b;
+    border-width: thin !important;
+}
+.btn-blue3-bg {
+    /* background-color: #3a58ec !important; */
+    color: #8196ff !important;
+    /* font-weight: bold; */
+    border-style: solid !important;
+    border-color: #4b4b4b;
+    border-width: thin !important;
+}
+.btn-yellow1-bg {
+    /* background-color: #fbff00af !important; */
+    /* display: inline-block !important; */
+    color: #ffd900 !important;
+    /* font-weight:normal; */
+    border-style: solid !important;
+    border-color: #4b4b4b;
+    border-width: thin !important;
+}
+.btn-yellow2-bg {
+    /* background-color: #fbff00af !important; */
+    /* display: inline-block !important; */
+    color: #d2b300 !important;
+    /* font-weight:normal; */
+    border-style: solid !important;
+    border-color: #4b4b4b;
+    border-width: thin !important;
+}
+.btn-yellow3-bg {
+    /* background-color: #fbff00af !important; */
+    /* display: inline-block !important; */
+    color: #ffd900 !important;
+    /* font-weight:normal; */
+    border-style: solid !important;
+    border-color: #adadad;
+    border-width: thin !important;
+}
+.btn-pink1-bg {
+    /* background-color: #d778ae !important; */
+    color: #d778ae !important;
+    /* font-weight: bold; */
+    border-style: solid !important;
+    border-color: #4b4b4b;
+    border-width: thin !important;
+}
+.btn-orange1-bg {
+    /* background-color: #f35618ca !important; */
+    color: #f35618ca !important;
+    /* font-weight: bold; */
+    border-style: solid !important;
+    border-color: #4b4b4b;
+    border-width: thin !important;
+}.btn-red1-bg {
+    /* background-color: #f35618ca !important; */
+    color: #ff3333aa !important;
+    /* font-weight: bold; */
+    border-style: solid !important;
+    border-color: #4b4b4b;
+    border-width: thin !important;
+}

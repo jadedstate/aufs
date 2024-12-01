@@ -1,6 +1,7 @@
 import os
 import sys
 import pandas as pd
+import uuid
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableView, QPushButton, QComboBox, QMessageBox, QInputDialog, QTreeWidgetItem, QTreeWidget,
     QLineEdit, QTextEdit, QLabel, QWidget, QStyledItemDelegate
@@ -12,7 +13,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 src_path = os.path.join(current_dir, '..', '..', '..')  # Adjust to point to the `src` folder
 sys.path.insert(0, src_path)
 
-from src.aufs.user_tools.editable_pandas_model import EditablePandasModel
+from src.aufs.user_tools.editable_pandas_model import EditablePandasModel, EnhancedPandasModel, SortableTableView
 
 class CustomDelegate(QStyledItemDelegate):
     def __init__(self, value_options=None, parent=None):
@@ -50,12 +51,14 @@ class CustomDelegate(QStyledItemDelegate):
         model.setData(index, value, Qt.EditRole)
 
 class DeepEditor(QWidget):
-    def __init__(self, file_path=None, dataframe_input=None, value_options=None, file_type='parquet', nested_mode=False, parent=None, button_flags=None):
+    def __init__(self, file_path=None, dataframe_input=None, value_options=None, file_type='parquet', 
+                 nested_mode=False, preload=False, parent=None, button_flags=None, auto_fit_columns=True):
         super().__init__(parent)
+        self.preload = preload
         self.current_tree_dialog = None
         self.current_row = None
         self.current_col = None
-        
+        self.auto_fit_columns = auto_fit_columns        
         # Save the file path and type if provided
         self.file_path = file_path
         self.file_type = file_type
@@ -73,7 +76,7 @@ class DeepEditor(QWidget):
         else:
             self.setWindowTitle(f"Editing DataFrame")
 
-        self.resize(1000, 800)
+        self.resize(3000, 800)
 
         # Initialize button flags if not provided
         if button_flags is None:
@@ -144,6 +147,10 @@ class DeepEditor(QWidget):
         self.table_view.setItemDelegate(delegate)
         self.central_layout.addWidget(self.table_view)
 
+        # Apply auto-fitting of columns if enabled
+        if self.auto_fit_columns:
+            self.table_view.resizeColumnsToContents()
+            
         # === Top button layout (use QVBox and QHBox to replace QGridLayout) ===
         self.top_button_layout = QVBoxLayout()  # Using QVBoxLayout for vertical stacking
 
@@ -263,101 +270,18 @@ class DeepEditor(QWidget):
     def load_data(self):
         """Load data from a DataFrame or file."""
         if self.dataframe_input is not None and isinstance(self.dataframe_input, pd.DataFrame):
-            # print("Loading data from provided DataFrame.")
-            # print(self.dataframe_input)
             self.load_from_dataframe(self.dataframe_input)
-        else:
-            print("Loading from file.")
+        elif self.file_path:
             self.load_file()
 
     def load_from_dataframe(self, dataframe):
         """Load directly from an in-memory DataFrame."""
         self.dataframe = dataframe
-        # print("this should be loaded: ")
-        # print(self.dataframe)
-        self.model = EditablePandasModel(self.dataframe, editable=True, parent=self)
-        self.table_view.setModel(self.model)
+        self.model.update_dataframe(dataframe)
 
-    def load_file(self):
-        """Load the file based on its type ('parquet' or 'csv')."""
-        if self.file_path:
-            if self.file_type == 'parquet':
-                self.load_parquet()
-            elif self.file_type == 'csv':
-                self.load_csv()
-
-    def reload_file(self):
-        """Reload the file, discarding any unsaved changes."""
-        if self.file_path:
-            reply = QMessageBox.question(self, 'Confirm Reload', 
-                                         "Are you sure you want to reload the file? All unsaved changes will be lost.", 
-                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if reply == QMessageBox.Yes:
-                self.load_file()
-
-    def save_file(self):
-        """Save the DataFrame to the file, or return the DataFrame if no file is provided."""
-        if self.file_path:
-            try:
-                if self.file_type == 'parquet':
-                    self.dataframe.to_parquet(self.file_path, index=False)
-                elif self.file_type == 'csv':
-                    self.dataframe.to_csv(self.file_path, index=False)
-                QMessageBox.information(self, "Success", "Changes saved successfully.")
-                self.changes_made = False  # Reset changes tracking after saving
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to save file: {str(e)}")
-        else:
-            # If no file path, we return the DataFrame (useful for the in-memory case)
-            return self.dataframe
-
-    def load_parquet(self):
-        """Load the Parquet file into a Pandas DataFrame."""
-        try:
-            if os.path.exists(self.file_path):
-                self.dataframe = pd.read_parquet(self.file_path)
-                self.model = EditablePandasModel(self.dataframe, editable=True, parent=self)
-                self.table_view.setModel(self.model)
-            else:
-                QMessageBox.warning(self, "File Not Found", f"{self.file_path} does not exist.")
-                self.dataframe = pd.DataFrame()  # Empty DataFrame if the file is not found
-                self.model = EditablePandasModel(self.dataframe, editable=True, parent=self)
-                self.table_view.setModel(self.model)
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load Parquet file: {str(e)}")
-            self.dataframe = pd.DataFrame()  # Empty DataFrame on failure
-            self.model = EditablePandasModel(self.dataframe, editable=True, parent=self)
-            self.table_view.setModel(self.model)
-
-    def load_csv(self, dtype_mapping=None):
-        """Load the CSV file into a Pandas DataFrame with specified column data types."""
-        try:
-            if os.path.exists(self.file_path):
-                # Load CSV with dtype mapping if provided
-                if dtype_mapping is None:
-                    dtype_mapping = {
-                        'PADDING': str,
-                        'FIRSTFRAME': str,
-                        'LASTFRAME': str,
-                    }  # Default to an empty dictionary if no mapping is provided
-                self.dataframe = pd.read_csv(self.file_path, dtype=dtype_mapping)
-
-                # Print loaded DataFrame to verify
-                # print("Here's the loaded DataFrame:")
-                # print(self.dataframe.head())
-
-                self.model = EditablePandasModel(self.dataframe, editable=True, parent=self)
-                self.table_view.setModel(self.model)
-            else:
-                QMessageBox.warning(self, "File Not Found", f"{self.file_path} does not exist.")
-                self.dataframe = pd.DataFrame()  # Empty DataFrame if the file is not found
-                self.model = EditablePandasModel(self.dataframe, editable=True, parent=self)
-                self.table_view.setModel(self.model)
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load CSV file: {str(e)}")
-            self.dataframe = pd.DataFrame()  # Empty DataFrame on failure
-            self.model = EditablePandasModel(self.dataframe, editable=True, parent=self)
-            self.table_view.setModel(self.model)
+        # Reapply column resizing if enabled
+        if self.auto_fit_columns:
+            self.table_view.resizeColumnsToContents()
 
     def track_changes(self):
         """Track if any changes were made to the DataFrame."""
@@ -376,9 +300,73 @@ class DeepEditor(QWidget):
             elif reply == QMessageBox.No:
                 event.accept()  # Close without saving
             else:
-                event.ignore()  # Cancel the close
+                event.ignore()  # Cancel closing
         else:
             event.accept()
+
+    def load_file(self):
+        """Load the file based on its type ('parquet' or 'csv')."""
+        if self.file_path:
+            if self.file_type == 'parquet':
+                self.load_parquet(preload=self.preload)
+            elif self.file_type == 'csv':
+                self.load_csv(preload=self.preload)
+
+    def reload_file(self):
+        """Reload the file, discarding any unsaved changes."""
+        if self.file_path:
+            reply = QMessageBox.question(self, 'Confirm Reload', 
+                                         "Are you sure you want to reload the file? All unsaved changes will be lost.", 
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                self.load_file()
+
+    def load_parquet(self, preload=False):
+        """Load the Parquet file into a Pandas DataFrame."""
+        try:
+            if os.path.exists(self.file_path):
+                dataframe = pd.read_parquet(self.file_path)
+
+                if preload:
+                    # Treat as user-passed DataFrame
+                    self.dataframe_input = dataframe
+                    self.load_from_dataframe(dataframe)  # Reuse existing method for direct DataFrame loading
+                else:
+                    # Original behavior
+                    self.dataframe = dataframe
+                    self.model.update_dataframe(dataframe)
+                    self.table_view.setModel(self.model)
+                    if self.auto_fit_columns:
+                        self.table_view.resizeColumnsToContents()
+            else:
+                QMessageBox.warning(self, "File Not Found", f"{self.file_path} does not exist.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load Parquet file: {str(e)}")
+
+    def load_csv(self, dtype_mapping=None, preload=False):
+        """Load the CSV file into a Pandas DataFrame with specified column data types."""
+        try:
+            if os.path.exists(self.file_path):
+                if dtype_mapping is None:
+                    dtype_mapping = {'PADDING': str, 'FIRSTFRAME': str, 'LASTFRAME': str}
+                dataframe = pd.read_csv(self.file_path, dtype=dtype_mapping)
+                print("Read: ", self.file_path)
+                
+                if preload:
+                    # Treat as user-passed DataFrame
+                    self.dataframe_input = dataframe
+                    self.load_from_dataframe(dataframe)  # Reuse existing method for direct DataFrame loading
+                else:
+                    # Original behavior
+                    self.dataframe = dataframe
+                    self.model.update_dataframe(dataframe)
+                    self.table_view.setModel(self.model)
+                    if self.auto_fit_columns:
+                        self.table_view.resizeColumnsToContents()
+            else:
+                QMessageBox.warning(self, "File Not Found", f"{self.file_path} does not exist.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load CSV file: {str(e)}")
 
     def delete_selected_rows(self):
         """Deletes the currently selected rows."""
@@ -411,13 +399,41 @@ class DeepEditor(QWidget):
         self.table_view.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table_view.customContextMenuRequested.connect(self.open_context_menu)
 
-    def save_csv(self):
-        """Save the edited DataFrame back to the CSV file."""
+    def save_file(self, partition_cols=None):
+        """Save the DataFrame to a file based on file type."""
+        if self.file_path:
+            try:
+                if self.file_type == 'parquet':
+                    self.save_parquet(partition_cols)
+                elif self.file_type == 'csv':
+                    self.save_csv()
+                QMessageBox.information(self, "Success", "Changes saved successfully.")
+                self.changes_made = False  # Reset changes tracking after saving
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save file: {str(e)}")
+        else:
+            # If no file path, return the edited DataFrame
+            return self.dataframe
+
+    def save_parquet(self, partition_cols=None):
+        """Save the DataFrame to a Parquet file."""
         try:
-            self.model.get_dataframe().to_csv(self.file_path, index=False)
-            QMessageBox.information(self, "Success", "Changes saved successfully.")
+            if partition_cols:
+                self.dataframe.to_parquet(self.file_path, partition_cols=partition_cols)
+            else:
+                self.dataframe.to_parquet(self.file_path)
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to save {self.file_path}: {str(e)}")
+            raise IOError(f"Failed to save Parquet file: {str(e)}")
+
+    def save_csv(self):
+        """Save the DataFrame to a CSV file."""
+        try:
+            dataframe = self.model.get_dataframe()  # Ensure we get the updated DataFrame
+            dataframe.to_csv(self.file_path, index=False)
+            QMessageBox.information(self, "Success", f"CSV saved successfully: {self.file_path}")
+            self.changes_made = False  # Reset the changes tracking
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save CSV: {str(e)}")
 
     def reload_csv(self):
         """Reload the CSV file and discard any unsaved changes."""
@@ -848,13 +864,6 @@ class DeepEditor(QWidget):
             elif isinstance(value, list):  # Arrays inside struct fields
                 self.recurse_list(value, f"{path_str}.{field_name}")
 
-    def save_parquet(self, dataframe, save_path):
-        try:
-            dataframe.to_parquet(save_path, partition_cols=['nested_field1', 'nested_field2'])  # Specify nested columns for partitioning
-            QMessageBox.information(self, "Success", "Changes saved to Parquet.")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to save Parquet: {str(e)}")
-
 class NestedEditor(QDialog):
     def __init__(self, dataframe, parent=None, is_struct=False, struct_schema=None):
         super().__init__(parent)
@@ -958,4 +967,3 @@ class NestedEditor(QDialog):
     def get_dataframe(self):
         """Return the edited DataFrame."""
         return self.model.get_dataframe()
-    

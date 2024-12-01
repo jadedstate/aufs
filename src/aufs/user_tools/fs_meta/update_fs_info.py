@@ -3,9 +3,10 @@ import os
 import time
 import argparse
 import pandas as pd
+from datetime import datetime, timezone
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QPushButton,
-    QFileDialog, QListWidget, QMessageBox, QComboBox, QLabel, QDialog, QCheckBox, QTreeWidget, QTreeWidgetItem
+    QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QFileDialog,
+    QDialog, QTableWidget, QTableWidgetItem, QCheckBox, QListWidget, QMessageBox, QComboBox, QLabel
 )
 from PySide6.QtCore import Qt
 
@@ -28,7 +29,9 @@ class DirectoryLoaderUI(QMainWindow):
         self.client = client
         self.project = project
         self.timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-        self.directories = []
+        self.directories = []  # Current directories
+        self.initial_directories = []  # Tracks initial state
+        self.time_ago_mode = True  # Show relative time by default
 
         # Setup UI
         self.setup_ui()
@@ -67,31 +70,27 @@ class DirectoryLoaderUI(QMainWindow):
 
         main_layout.addLayout(job_selection_layout)
 
-        # Load directories from CSV button with checkbox
-        get_dirs_list_layout = QHBoxLayout()
+        # Table for displaying directories and "Last Scraped"
+        self.directory_table = QTableWidget()
+        self.directory_table.setColumnCount(2)
+        self.directory_table.setHorizontalHeaderLabels(["Directory Path", "Last Scraped"])
+        self.directory_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.directory_table.setSelectionMode(QTableWidget.MultiSelection)
+        self.directory_table.itemSelectionChanged.connect(self.update_selected_paths)
+        main_layout.addWidget(self.directory_table)
+
+        # Time toggle checkbox
+        self.time_toggle_checkbox = QCheckBox("Show Relative Time")
+        self.time_toggle_checkbox.setChecked(True)
+        self.time_toggle_checkbox.stateChanged.connect(self.toggle_time_display)
+        # main_layout.addWidget(self.time_toggle_checkbox)
 
         # Directory browser button
         browse_directories_button = QPushButton("Browse Directories")
         browse_directories_button.clicked.connect(self.open_directory_browser)
-        get_dirs_list_layout.addWidget(browse_directories_button)
-
-        load_csv_button = QPushButton("Load Directories from CSV")
-        load_csv_button.clicked.connect(self.load_directories_from_csv)
-        get_dirs_list_layout.addWidget(load_csv_button)
-
-        self.include_first_row_checkbox = QCheckBox("Include First Row")
-        self.include_first_row_checkbox.setChecked(False)
-        get_dirs_list_layout.addWidget(self.include_first_row_checkbox)
-
-        main_layout.addLayout(get_dirs_list_layout)
-
-        # Tree view to display CSV files in `path_lists`
-        self.csv_tree = QTreeWidget()
-        self.csv_tree.setHeaderLabel("Saved Directory Lists")
-        self.csv_tree.itemClicked.connect(self.load_selected_csv)
-        main_layout.addWidget(self.csv_tree)
-
-        # Directory list view
+        main_layout.addWidget(browse_directories_button)
+                
+        # Lower pane for selected directories
         self.directory_list_view = QListWidget()
         self.directory_list_view.setSelectionMode(QListWidget.MultiSelection)
         main_layout.addWidget(self.directory_list_view)
@@ -103,6 +102,7 @@ class DirectoryLoaderUI(QMainWindow):
 
         # Bottom control buttons
         button_layout = QHBoxLayout()
+
         remove_button = QPushButton("Remove Selected")
         remove_button.clicked.connect(self.remove_selected_directories)
         button_layout.addWidget(remove_button)
@@ -111,9 +111,16 @@ class DirectoryLoaderUI(QMainWindow):
         clear_button.clicked.connect(self.clear_all_directories)
         button_layout.addWidget(clear_button)
 
+        self.cancel_button = QPushButton("Cancel Operation")
+        self.cancel_button.setEnabled(False)  # Initially disabled
+        self.cancel_button.clicked.connect(self.request_cancel)
+        button_layout.addWidget(self.cancel_button)
+
         exit_button = QPushButton("Exit")
         exit_button.clicked.connect(self.close)
         button_layout.addWidget(exit_button)
+
+        main_layout.addLayout(button_layout)
 
         main_layout.addLayout(button_layout)
 
@@ -136,58 +143,124 @@ class DirectoryLoaderUI(QMainWindow):
         """Populate the client dropdown based on directories in jobs_dir."""
         if os.path.exists(self.jobs_dir):
             clients = [d for d in os.listdir(self.jobs_dir) if os.path.isdir(os.path.join(self.jobs_dir, d))]
-            self.client_dropdown.addItems(clients)
+            filtered_clients = [client for client in clients if client not in {"vendors", "OUT"}]
+            self.client_dropdown.addItems(filtered_clients)
 
     def update_projects(self):
-        """Update the project dropdown based on the selected client and refresh path list."""
+        """Update the project dropdown based on the selected client."""
         client = self.client_dropdown.currentText()
         client_path = os.path.join(self.jobs_dir, client)
-        
         self.project_dropdown.clear()
         if os.path.exists(client_path):
             projects = [d for d in os.listdir(client_path) if os.path.isdir(os.path.join(client_path, d))]
             self.project_dropdown.addItems(projects)
 
     def load_path_list_files(self):
-        """Load all CSV files in the path_lists directory into the tree view."""
-        self.csv_tree.clear()
+        """Load directories and scrape times from CSV files into the table."""
+        self.directory_table.setRowCount(0)  # Clear the table
         client = self.client_dropdown.currentText()
         project = self.project_dropdown.currentText()
         path_list_dir = os.path.join(self.jobs_dir, client, project, 'fs_updates/path_lists')
-        self.job_home = path_list_dir
 
-        if os.path.exists(path_list_dir):
-            for file_name in os.listdir(path_list_dir):
-                if file_name.endswith(".csv"):
-                    file_item = QTreeWidgetItem(self.csv_tree, [file_name])
-                    file_item.setData(0, Qt.UserRole, os.path.join(path_list_dir, file_name))
+        # if not os.path.exists(path_list_dir):
+        #     QMessageBox.warning(self, "Path Lists Not Found", f"{path_list_dir} does not exist.")
+        #     return
 
-    def load_directories_from_csv(self, csv_path=None):
-        """Load directories from a CSV file, optionally including the header row."""
-        if not csv_path:
-            # Open file dialog if no path is provided
-            file_dialog = QFileDialog(self)
-            csv_path, _ = file_dialog.getOpenFileName(self, "Open CSV File", "", "CSV Files (*.csv)")
-        
-        if csv_path:
+        files = [f for f in os.listdir(path_list_dir) if f.endswith("-path_list.csv")]
+        files.sort()
+
+        # Use a dictionary to consolidate paths with the earliest timestamps
+        consolidated_data = {}
+
+        for file_name in files:
+            csv_path = os.path.join(path_list_dir, file_name)
+            scrape_time = self.extract_time_from_filename(file_name)
+
             try:
-                # Use header=0 if checkbox is checked, else use header=None
-                header = None if self.include_first_row_checkbox.isChecked() else 0
-                
-                # Read directories from CSV into a list and add to directories list
-                df = pd.read_csv(csv_path, header=header)
-                new_directories = df.iloc[:, 0].tolist()  # Use .iloc to avoid column name issues
-                
-                # Clear the current list first and add new directories
-                self.clear_all_directories()
-                self.add_directories_to_list(new_directories)
+                df = pd.read_csv(csv_path)
+                for directory in df["Directory Paths"]:
+                    # If the path exists, keep the earlier timestamp
+                    if directory not in consolidated_data or scrape_time < consolidated_data[directory]:
+                        consolidated_data[directory] = scrape_time
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to load CSV file: {str(e)}")
+                QMessageBox.critical(self, "Error", f"Failed to load CSV: {csv_path}\n{str(e)}")
 
-    def load_selected_csv(self, item):
-        """Load the directory paths from the selected CSV file in the tree."""
-        csv_path = item.data(0, Qt.UserRole)
-        self.load_directories_from_csv(csv_path)  # Reuse load_directories_from_csv for loading from tree selection
+        # Add consolidated data to the table
+        for directory, scrape_time in consolidated_data.items():
+            row_position = self.directory_table.rowCount()
+            self.directory_table.insertRow(row_position)
+
+            # Add directory path and relative time to the table
+            self.directory_table.setItem(row_position, 0, QTableWidgetItem(directory))
+            self.directory_table.setItem(row_position, 1, QTableWidgetItem(self.get_relative_time(scrape_time)))
+
+    def update_selected_paths(self):
+        """Update the lower pane and selected directories list."""
+        self.directory_list_view.clear()
+        selected_rows = self.directory_table.selectionModel().selectedRows()
+
+        self.directories = []  # Reset the selected directories
+        for row in selected_rows:
+            directory = self.directory_table.item(row.row(), 0).text()
+            self.directory_list_view.addItem(directory)
+            self.directories.append(directory)
+
+    def load_path_list_files(self):
+        """Load directories and scrape times from CSV files into the table."""
+        self.directory_table.setRowCount(0)  # Clear the table
+        client = self.client_dropdown.currentText()
+        project = self.project_dropdown.currentText()
+
+        # Ensure client and project are valid
+        if not client:
+            return
+        if not project:
+            return
+
+        path_list_dir = os.path.join(self.jobs_dir, client, project, 'fs_updates/path_lists')
+        # os.makedirs(path_list_dir, exist_ok=(True))
+
+        # Check if the directory exists
+        if not os.path.exists(path_list_dir):
+            os.makedirs(path_list_dir, exist_ok=(True))
+
+            # QMessageBox.information(
+            #     self,
+            #     "Path Lists Not Found",
+            #     f"No path list directory exists for the selected project:\n{path_list_dir}",
+            # )
+            return
+
+        files = [f for f in os.listdir(path_list_dir) if f.endswith("-path_list.csv")]
+        files.sort()
+
+        # Use a dictionary to consolidate paths with the latest timestamps
+        consolidated_data = {}
+
+        for file_name in files:
+            csv_path = os.path.join(path_list_dir, file_name)
+            scrape_time = self.extract_time_from_filename(file_name)
+
+            try:
+                df = pd.read_csv(csv_path)
+                for directory in df["Directory Paths"]:
+                    # If the path exists, keep the latest timestamp
+                    if directory not in consolidated_data or scrape_time > consolidated_data[directory]:
+                        consolidated_data[directory] = scrape_time
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to load CSV: {csv_path}\n{str(e)}")
+
+        # Add consolidated data to the table
+        for directory, scrape_time in consolidated_data.items():
+            row_position = self.directory_table.rowCount()
+            self.directory_table.insertRow(row_position)
+
+            # Add directory path and relative time to the table
+            self.directory_table.setItem(row_position, 0, QTableWidgetItem(directory))
+            self.directory_table.setItem(row_position, 1, QTableWidgetItem(self.get_relative_time(scrape_time)))
+
+        # Resize columns to fit contents
+        self.directory_table.resizeColumnsToContents()
 
     def open_directory_browser(self):
         """Open directory browser to select multiple directories with an 'Add' button that keeps the dialog open."""
@@ -219,18 +292,6 @@ class DirectoryLoaderUI(QMainWindow):
                 self.directories.append(directory)
                 self.directory_list_view.addItem(directory)
 
-    def remove_selected_directories(self):
-        """Remove selected directories from the list."""
-        selected_items = self.directory_list_view.selectedItems()
-        for item in selected_items:
-            self.directories.remove(item.text())
-            self.directory_list_view.takeItem(self.directory_list_view.row(item))
-
-    def clear_all_directories(self):
-        """Clear all directories from the list."""
-        self.directories.clear()
-        self.directory_list_view.clear()
-
     def run_scraper(self):
         """Run the file system scraper with the selected directories and settings."""
         client = self.client_dropdown.currentText()
@@ -255,39 +316,117 @@ class DirectoryLoaderUI(QMainWindow):
         os.makedirs(os.path.dirname(path_list_csv), exist_ok=True)
 
         shots_df = pd.read_csv(shots_csv)
-        # print(shots_df)
         dir_list_df = pd.DataFrame(self.directories, columns=["Directory Paths"])
 
-        try:
-            df = file_details_df_from_path(self.directories, client=client, project=project, shots_df=shots_df, output_csv=output_csv)
-            if df.empty:
-                QMessageBox.information(self, "No Data Found", "No data found in the selected directories.")
-                return
+        # Enable cancelation
+        self.cancel_button.setEnabled(True)
+        self.cancel_requested = False
 
-            self.open_editor(df)
-            dir_list_df.to_csv(path_list_csv, index=False)
+        try:
+            for i, directory in enumerate(self.directories):
+                if self.cancel_requested:
+                    QMessageBox.information(self, "Operation Canceled", f"Scraping stopped after {i} directories.")
+                    break
+
+                # Scrape details for the current directory
+                df = file_details_df_from_path([directory], client=client, project=project, shots_df=shots_df, output_csv=output_csv)
+                if not df.empty:
+                    self.open_editor(df)
+
+            if not self.cancel_requested:
+                dir_list_df.to_csv(path_list_csv, index=False)
+                QMessageBox.information(self, "Scraping Complete", f"Scraped data saved to {path_list_csv}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to scrape directories: {str(e)}")
+        finally:
+            # Disable cancelation
+            self.cancel_button.setEnabled(False)
+            self.cancel_requested = False
+
+    def extract_time_from_filename(self, filename):
+        """Extract the timestamp from the filename and convert it to local time."""
+        try:
+            # Parse the UTC timestamp from the filename
+            timestamp_str = filename.split("-")[2].replace("T", " ").replace("Z", "")
+            utc_time = datetime.strptime(timestamp_str, "%Y%m%d %H%M%S").replace(tzinfo=timezone.utc)
+
+            # Convert to local time
+            local_time = utc_time.astimezone()
+            return local_time
+        except (ValueError, IndexError):
+            return None  # Return None if timestamp cannot be parsed
+            
+    def toggle_time_display(self):
+        """Toggle between relative time and exact timestamps."""
+        self.time_ago_mode = self.time_toggle_checkbox.isChecked()
+
+        for row in range(self.directory_table.rowCount()):
+            timestamp_item = self.directory_table.item(row, 1)
+            directory_item = self.directory_table.item(row, 0)
+
+            # Ensure items exist
+            if not timestamp_item or not directory_item:
+                continue
+
+            # Retrieve the stored scrape time
+            timestamp_str = directory_item.text()
+            timestamp = self.extract_time_from_filename(timestamp_str)
+
+            if not timestamp:
+                timestamp_item.setText("Unknown")
+                continue
+
+            # Update display based on mode
+            if self.time_ago_mode:
+                timestamp_item.setText(self.get_relative_time(timestamp))
+            else:
+                timestamp_item.setText(timestamp.strftime("%Y-%m-%d %H:%M:%S"))
+
+    def get_relative_time(self, timestamp):
+        """Convert a timestamp to a relative time string."""
+        if not timestamp:
+            return "Unknown"
+
+        # Make datetime.now() timezone-aware
+        now = datetime.now(timezone.utc).astimezone()  # Convert to local timezone
+
+        delta = now - timestamp
+        if delta.days > 0:
+            return f"{delta.days} days ago"
+        elif delta.seconds > 3600:
+            return f"{delta.seconds // 3600} hours ago"
+        elif delta.seconds > 60:
+            return f"{delta.seconds // 60} mins ago"
+        else:
+            return "Just now"
+        
+    def remove_selected_directories(self):
+        """Remove selected directories from the lower pane."""
+        selected_items = self.directory_list_view.selectedItems()
+        for item in selected_items:
+            self.directory_list_view.takeItem(self.directory_list_view.row(item))
+
+    def clear_all_directories(self):
+        """Clear all directories from the lower pane."""
+        self.directory_list_view.clear()
 
     def open_editor(self, df):
-        """Open the DeepEditor inside a modal dialog to display and edit the DataFrame."""
-        button_flags = {
-            'exit': False,
-            'save': False,
-            'sort_column': False,
-            'set_column_type': False,
-            'dtype_dropdown': False
-        }
+        """Open the DeepEditor inside a modal dialog."""
         editor_dialog = QDialog(self)
         editor_dialog.setWindowTitle("Edit DataFrame")
         editor_dialog.setModal(True)
         editor_dialog.resize(1000, 800)
-
-        editor = DeepEditor(dataframe_input=df, button_flags=button_flags, parent=editor_dialog)
+        editor = DeepEditor(dataframe_input=df, parent=editor_dialog)
         layout = QVBoxLayout(editor_dialog)
         layout.addWidget(editor)
         editor_dialog.setLayout(layout)
         editor_dialog.exec()
+
+    def request_cancel(self):
+        """Set the cancelation flag to True."""
+        self.cancel_requested = True
+        QMessageBox.information(self, "Cancel Requested", "The current operation will stop shortly.")
+
 
 def main():
     """Main entry point for the application."""

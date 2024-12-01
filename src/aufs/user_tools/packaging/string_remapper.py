@@ -2,6 +2,8 @@ import os
 import sys
 import pandas as pd
 from datetime import datetime
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QPushButton, 
+                               QMessageBox)
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 src_path = os.path.join(current_dir, '..', '..', '..', '..')
@@ -26,6 +28,7 @@ class StringRemapper:
         self.recipient = recipient # 'amolesh'
         self.user = user or "system"
         self.working_versions = {}
+        self.unprocessed_target_columns = []
 
         self.version_controller = VersionController(
             root_path=self.root_path,
@@ -66,61 +69,67 @@ class StringRemapper:
             return False
         return True  # Assume all other cases are valid
 
-    def remap(self, id_column=None, id_value=None, target_columns=None, row_data=None, remap_type=None, ignore_columns=None):
-        """
-        Perform the remapping process, supporting direct row_data input.
-        """
+    def remap(self, id_column=None, id_value=None, target_columns=None, virtual_headers=None, use_dialog=False, row_data=None, remap_type=None, ignore_columns=None, root_job_path=None, use_custom_remapper=True, interrupt=False):
         ignore_columns = ignore_columns or []
+        never_custom_cols = ["PADDING"]  # Add any other columns to exclude from custom remapping
+        self.unprocessed_target_columns = [
+            col for col in target_columns if col.isupper() and col not in never_custom_cols
+        ]  # Initialize tracking
+        
+        # Set default virtual headers if not provided
+        if virtual_headers is None:
+            virtual_headers = ["VERSION", "YYYYMMDD", "PKGVERSION3PADDED"]
+        
+        result = {}
+        self.job_templates_path = os.path.join(root_job_path, "templates") if root_job_path else None
 
         if row_data is not None:
-            self.row_data = row_data.iloc[0]  # Convert to Series for easier access
+            self.row_data = row_data.iloc[0]
         elif id_column and id_value and self.mappings_df is not None:
             row = self.mappings_df[self.mappings_df[id_column] == id_value]
             if row.empty:
-                return {}  # No match found; return empty dictionary
+                return {}
             self.row_data = row.iloc[0]
         else:
             raise ValueError("Either row_data or a valid id_column and id_value must be provided.")
 
-        # Set remap type
-        self.remap_type = remap_type or self.row_data.get('REMAPTYPE', 'string')
-        result = {}  # Initialize as a dictionary
+        remap_type = remap_type or self.row_data.get('REMAPTYPE', 'string')
 
         for col in target_columns:
             if col in ignore_columns:
                 continue
 
-            # Handle virtual columns
-            if col in ["VERSION", "YYYYMMDD", "PKGVERSION3PADDED"]:
-                if row_data is not None:
-                    value = self._handle_virtual_column(col, row_data=self.row_data)
-                else:
-                    value = self._handle_virtual_column(col, id_value=id_value)
-            else:
-                # Regular columns
-                if col in self.row_data:
-                    value = self.row_data[col]
-                    if isinstance(value, str) and value.strip():  # Check for valid non-empty strings
-                        if col == "PADDING":
-                            value = self._format_padding(value, self.row_data.get("PADDING_STYLE", "standard"))
-                        elif col == "DOTEXTENSION":
-                            value = self._adjust_dotextension(value, self.row_data.get("EXT_CASE", "default"))
-                        elif self.remap_type.endswith("-findfile-rec"):
-                            value = self._find_file(value, None, recursive=True)
-                        elif self.remap_type.endswith("-findfile-norec"):
-                            value = self._find_file(value, None, recursive=False)
-                    else:
-                        continue  # Skip invalid or empty values
-                else:
-                    continue  # Skip missing columns
+            value = None
+            if col in self.row_data:
+                value = self.row_data[col]
+                if col == "PADDING":
+                    value = self._format_padding(value, self.row_data.get("PADDING_STYLE", "standard"))
+                elif col == "DOTEXTENSION":
+                    value = self._adjust_dotextension(value, self.row_data.get("EXT_CASE", "default"))
+            elif col in virtual_headers:  # Check against the dynamic `virtual_headers`
+                value = self._handle_virtual_column(col, row_data=self.row_data, use_dialog=use_dialog)
 
-            # Add valid mappings to the result dictionary
-            if value:  # Ensure value is not None or empty
+            # If value is valid, add to result and mark column as processed
+            if self._is_valid_value(value):
                 result[col] = value
+                if col in self.unprocessed_target_columns:
+                    self.unprocessed_target_columns.remove(col)
+
+        # Custom remapping for remaining variables
+        if use_custom_remapper and self.unprocessed_target_columns:
+            custom_remapper = CustomVariableRemapper(
+                mappings_df=self.mappings_df,
+                root_path=self.root_path,
+                recipient=self.recipient,
+                user=self.user,
+                job_templates_path=self.job_templates_path
+            )
+            custom_results = custom_remapper.custom_remap(self.unprocessed_target_columns)
+            result.update(custom_results)  # Merge custom remapping results into the final output
 
         return result
 
-    def _handle_virtual_column(self, col, id_value=None, row_data=None):
+    def _handle_virtual_column(self, col, id_value=None, row_data=None, use_dialog=False):
         """Handles virtual columns that require versioning or date formatting."""
         # print("BooOOO from virtual columns handler, here is the row_data for reference: ")
         # print(row_data)
@@ -130,10 +139,12 @@ class StringRemapper:
             if not item and id_value:
                 item = os.path.basename(id_value)
 
-            self.initialize_version_controller(v_format="v", padding=4)
-            version, self.working_versions = self.version_controller.retrieve_working_version(item)
-            return version
-
+            if self._is_valid_value(item):
+                self.initialize_version_controller(v_format="v", padding=4)
+                version, self.working_versions = self.version_controller.retrieve_working_version(item, use_dialog=use_dialog)
+                return version
+            else:
+                return
         elif col == "YYYYMMDD":
             return datetime.utcnow().strftime('%Y%m%d')
 
@@ -141,7 +152,7 @@ class StringRemapper:
             # Use a special item name when row_data is available
             item = "YYYYMMDD_PKGVERSION3PADDED"
             self.initialize_version_controller(v_format="no", padding=3)
-            version, self.working_versions = self.version_controller.retrieve_working_version(item)
+            version, self.working_versions = self.version_controller.retrieve_working_version(item, use_dialog=use_dialog)
             return version
 
         return ""
@@ -196,3 +207,161 @@ class StringRemapper:
         print(self.working_versions)
         for item in self.working_versions:
             self.version_controller.log_version(item)
+
+class CustomVariableRemapper(StringRemapper):
+    TEMPLATE_FILENAME = "custom_aufs_pkg_template.csv"
+
+    def __init__(self, job_templates_path, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.job_templates_path = job_templates_path
+
+    def _initialize_template(self):
+        """Ensure the custom template CSV exists and has the required structure."""
+        template_path = os.path.join(self.job_templates_path, self.TEMPLATE_FILENAME)
+        if not os.path.exists(template_path):
+            df = pd.DataFrame(columns=["Variable", "Action", "Value"])
+            df.to_csv(template_path, index=False)
+        return pd.read_csv(template_path)
+
+    def _update_template(self, new_entries):
+        """Add new entries to the template CSV."""
+        template_path = os.path.join(self.job_templates_path, self.TEMPLATE_FILENAME)
+        template_df = pd.read_csv(template_path)
+        updated_df = pd.concat([template_df, pd.DataFrame(new_entries)], ignore_index=True)
+        updated_df.to_csv(template_path, index=False)
+
+    def custom_remap(self, remaining_vars):
+        """
+        Remap remaining variables using the custom template.
+
+        Parameters:
+        - remaining_vars (list): List of unprocessed uppercase variables.
+
+        Returns:
+        - dict: A dictionary containing remapped results in the form {Variable: Value}.
+        """
+        # Load or initialize the custom template
+        template = self._initialize_template()
+        # print("This is the template content: ")
+        # print(template)
+
+        # Prepare the results dictionary
+        results = {}
+
+        # Track variables requiring user input
+        user_input_needed = []
+        # print("Remaining VARIABLES are: ", remaining_vars)
+
+        for variable in remaining_vars:
+            # Check if the variable exists in the template
+            match = template.loc[template["Variable"] == variable]
+            if not match.empty:
+                action = match.iloc[0]["Action"]
+                value = match.iloc[0]["Value"]
+
+                if action == "remap":
+                    # Add to results directly
+                    results[variable] = value
+                # If "ignore", skip this variable
+            else:
+                # Track for user input
+                user_input_needed.append(variable)
+
+        # Handle unmapped variables via user input
+        if user_input_needed:
+            user_defined_entries = self._prompt_user_for_mappings(user_input_needed)
+            self._update_template(user_defined_entries)  # Update template with user input
+
+            # Add user-defined mappings to results
+            for entry in user_defined_entries:
+                if entry["Action"] == "remap":
+                    results[entry["Variable"]] = entry["Value"]
+
+        return results
+
+    def _prompt_user_for_mappings(self, variables):
+        """Prompt the user for input on unmapped variables."""
+        dialog = TemplateBuilderDialog(variables)
+        if dialog.exec() == QDialog.Accepted:
+            return dialog.get_mappings()
+        return []
+
+class TemplateBuilderDialog(QDialog):
+    def __init__(self, variables, parent=None):
+        super().__init__(parent)
+        self.variables = variables
+        self.mappings = []
+
+        self.setWindowTitle("Custom Variable Mapping")
+        self.resize(600, 400)
+
+        layout = QVBoxLayout(self)
+
+        # Add widgets for each variable
+        self.entries = []
+        for var in self.variables:
+            row_layout = QHBoxLayout()
+            
+            label = QLabel(var, self)
+            dropdown = QComboBox(self)
+            dropdown.addItems(["ignore", "remap"])
+            text_input = QLineEdit(self)
+
+            row_layout.addWidget(label)
+            row_layout.addWidget(dropdown)
+            row_layout.addWidget(text_input)
+            layout.addLayout(row_layout)
+
+            # Store entry components
+            self.entries.append((var, dropdown, text_input))
+
+        # Add Save and Cancel buttons
+        button_layout = QHBoxLayout()
+        save_button = QPushButton("Save", self)
+        cancel_button = QPushButton("Cancel", self)
+        button_layout.addWidget(save_button)
+        button_layout.addWidget(cancel_button)
+        layout.addLayout(button_layout)
+
+        save_button.clicked.connect(self.save_and_close)
+        cancel_button.clicked.connect(self.close)
+
+    def save_and_close(self):
+        """Save user input and close the dialog."""
+        self.mappings = []
+        for var, dropdown, text_input in self.entries:
+            action = dropdown.currentText()
+            value = text_input.text()
+
+            # Check if dropdown=remap and textInput=na|NaN|None
+            if action == "remap" and value.strip().lower() in {"na", "nan", "none"}:
+                confirmation = QMessageBox.question(
+                    self,
+                    "Confirm Empty Value",
+                    f"The value for variable '{var}' is '{value}', which will be treated as an empty string. Do you want to proceed?",
+                    QMessageBox.Yes | QMessageBox.No,
+                )
+                if confirmation == QMessageBox.Yes:
+                    value = ""  # Treat as an empty string
+                else:
+                    continue  # Skip saving this entry
+
+            # Check if textInput=<valid value> & dropdown!=remap
+            elif value.strip() and action != "remap":
+                confirmation = QMessageBox.question(
+                    self,
+                    "Confirm Action Adjustment",
+                    f"The value for variable '{var}' is '{value}', but the action is set to '{action}'. Do you want to change the action to 'remap'?",
+                    QMessageBox.Yes | QMessageBox.No,
+                )
+                if confirmation == QMessageBox.Yes:
+                    action = "remap"  # Adjust action to 'remap'
+
+            # Save the mapping
+            self.mappings.append({"Variable": var, "Action": action, "Value": value})
+
+        self.accept()
+
+    def get_mappings(self):
+        """Return the collected mappings."""
+        return self.mappings

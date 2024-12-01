@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>EC2 Instance Monitor</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-enterprise/styles/ag-grid.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-enterprise/styles/ag-theme-balham.css">
+    <script src="https://cdn.jsdelivr.net/npm/ag-grid-enterprise/dist/ag-grid-enterprise.min.noStyle.js"></script>
+    <script 
+    src="https://cdn.jsdelivr.net/npm/ag-charts-enterprise@9.0.0/dist/umd/ag-charts-enterprise.js"></script>
+    <script>
+        agGrid.LicenseManager.setLicenseKey("Using_this_{AG_Charts_and_AG_Grid}_Enterprise_key_{AG-063143}_in_excess_of_the_licence_granted_is_not_permitted___Please_report_misuse_to_legal@ag-grid.com___For_help_with_changing_this_key_please_contact_info@ag-grid.com___{Dasein_VFX_Ltd}_is_granted_a_{Single_Application}_Developer_License_for_the_application_{Opportunity_app.py}_only_for_{1}_Front-End_JavaScript_developer___All_Front-End_JavaScript_developers_working_on_{Opportunity_app.py}_need_to_be_licensed___{Opportunity_app.py}_has_not_been_granted_a_Deployment_License_Add-on___This_key_works_with_{AG_Charts_and_AG_Grid}_Enterprise_versions_released_before_{6_August_2025}____[v3]_[0102]_MTc1NDQzNDgwMDAwMA==d6878e1886072524d654527411c06681");
+    </script>
+    <script>
+        agCharts.AgCharts.setLicenseKey("Using_this_{AG_Charts_and_AG_Grid}_Enterprise_key_{AG-063143}_in_excess_of_the_licence_granted_is_not_permitted___Please_report_misuse_to_legal@ag-grid.com___For_help_with_changing_this_key_please_contact_info@ag-grid.com___{Dasein_VFX_Ltd}_is_granted_a_{Single_Application}_Developer_License_for_the_application_{Opportunity_app.py}_only_for_{1}_Front-End_JavaScript_developer___All_Front-End_JavaScript_developers_working_on_{Opportunity_app.py}_need_to_be_licensed___{Opportunity_app.py}_has_not_been_granted_a_Deployment_License_Add-on___This_key_works_with_{AG_Charts_and_AG_Grid}_Enterprise_versions_released_before_{6_August_2025}____[v3]_[0102]_MTc1NDQzNDgwMDAwMA==d6878e1886072524d654527411c06681");
+    </script>
+    <style>
+        body {
+            background-color: black;
+            color: white;
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            overflow-y: auto;
+        }
+        h1 {
+            color: white;
+            margin: 20px;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 0 20px;
+        }
+        .toggle-buttons {
+            padding: 10px;
+            width: 100%;
+            text-align: center;
+        }
+        #myChart {
+            height: 500px;
+            width: 100%;
+        }
+        #myGrid {
+            height: 1200px;
+            width: 100%;
+            margin-top: 20px;
+        }
+        .ag-theme-custom {
+            --ag-background-color: black;
+            --ag-foreground-color: white;
+            --ag-secondary-foreground-color: #ccc;
+            --ag-header-background-color: #333;
+            --ag-header-foreground-color: white;
+            --ag-row-hover-color: #222;
+            --ag-odd-row-background-color: #111;
+            --ag-border-color: #555;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>EC2 Instance Monitor</h1>
+        <div id="myChart"></div>
+        <div class="toggle-buttons">
+            <button id="toggleUpdatesButton" style="background-color: #0088aa;">Pause Updates</button>
+            <button id="resetStateButton" style="background-color: #ff4444; margin-left: 10px;">Reset State</button>
+            <button id="lineChartButton" style="background-color: #00aa00; margin-left: 10px;">Line Chart</button>
+            <button id="barChartButton" style="background-color: #00aa00; margin-left: 10px;">Bar Chart</button>
+        </div>
+
+        <div class="toggle-buttons">
+            <!-- <button id="filterRenderGroupPresent">Filter: RenderGroup Present</button>
+            <button id="filterRenderGroupAbsent">Filter: RenderGroup Absent</button>
+            <button id="clearRenderGroupFilter">Clear RenderGroup Filter</button>
+            <button id="rowGroupingButtonMp">Group by MemberPackages</button>
+            <button id="rowGroupingButtonWESh">Group by WhoFrom, Extension, ShotName</button>
+            <button id="rowGroupingButtonShM">Group by ShotName, Modification Time</button>
+            <button id="rowGroupingButtonShEM">Group by ShotName, Extension, Modification Time</button> -->
+            <button id="clearAllFilters">Clear All Filters</button>
+            <button id="clearAllGroupings">Clear All Groupings</button>
+        </div>
+
+        <div id="myGrid" class="ag-theme-balham-dark"></div>
+    </div>
+
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            let gridApi = null;
+            let updatesPaused = false;
+            let chart = null;
+            let chartType = 'bar'; // Default chart type
+            let initialChartState = null;
+
+            window.sendToPython = function(action, payload) {
+                new QWebChannel(qt.webChannelTransport, function(channel) {
+                    const dataProvider = channel.objects.dataProvider;
+                    if (dataProvider) {
+                        dataProvider.handleAction(action, JSON.stringify(payload)).then(function(response) {
+                            console.log('Action response:', response);
+                            fetchData();  // Refresh data after action
+                        }).catch(function(error) {
+                            console.error('Error sending action to Python:', error);
+                        });
+                    } else {
+                        console.error('DataProvider is not available');
+                    }
+                });
+            };
+
+            window.useFlaskRouteActions = function(action, params, preFlight = null) {
+                new QWebChannel(qt.webChannelTransport, function(channel) {
+                    const dataProvider = channel.objects.dataProvider;
+                    if (dataProvider) {
+                        dataProvider.processAction(action, params, preFlight).then(function(response) {
+                            console.log('Action response:', response);
+                            fetchData();  // Refresh data after action
+                        }).catch(function(error) {
+                            console.error('Error sending action to Python:', error);
+                        });
+                    } else {
+                        console.error('DataProvider is not available');
+                    }
+                });
+            };
+
+            window.fetchData = function fetchData() {
+    if (updatesPaused) return;
+
+    new QWebChannel(qt.webChannelTransport, function(channel) {
+        const dataProvider = channel.objects.dataProvider;
+        if (dataProvider) {
+            dataProvider.getData().then(function(data) {
+                try {
+                    const parsedData = JSON.parse(data);
+
+                    if (parsedData.length === 0) {
+                        console.log("No data available to render");
+                        return;
+                    }
+
+                    if (gridApi) {
+                        updateGrid(parsedData);  // Update the grid with new data
+                    } else {
+                        initializeGrid(parsedData);  // Initialize the grid if not already done
+                    }
+
+                    // ** Add this line to ensure the chart updates immediately after the grid **
+                    updateChartFromGrid();  // Update the chart based on the updated grid data
+
+                } catch (e) {
+                    console.error('Error parsing data:', e);
+                }
+            }).catch(function(error) {
+                console.error('Error fetching data:', error);
+            });
+        } else {
+            console.error('DataProvider is not available');
+        }
+    });
+};
+
+            function initializeGrid(data) {
+                console.log("Initializing grid with data:", data);
+
+                const definedColumnDefs = [
+                    { headerName: "Instance ID", field: "InstanceId", enableRowGroup: true, filter: 'agSetColumnFilter', sortable: true, sort: 'asc', minWidth: 250 },
+                    { headerName: "Instance Name", field: "Name", minWidth: 150 },
+                    { 
+                        headerName: "AWS Region", 
+                        field: "Region", 
+                        minWidth: 150, 
+                        enableRowGroup: true, 
+                        filter: 'agSetColumnFilter', 
+                        sortable: true 
+                    },
+                    {
+                        headerName: "Instance Type",
+                        field: "InstanceType",
+                        enableRowGroup: true,
+                        filter: 'agSetColumnFilter',
+                        sortable: true,
+                        minWidth: 150,
+                        valueFormatter: (params) => {
+                            return params.value ? params.value.toString() : '';
+                        }
+                    },
+                    { headerName: "State", field: "State_Name", enableRowGroup: true, filter: 'agSetColumnFilter', sortable: true, minWidth: 120 },
+                    { headerName: "Render Nodes", field: "RenderGroup", enableRowGroup: true, filter: 'agSetColumnFilter', sortable: true, minWidth: 120 },
+                    { headerName: "Public IP", field: "PublicIpAddress", minWidth: 150 },
+                    { headerName: "Private IP", field: "PrivateIpAddress", minWidth: 150 },
+                    { headerName: "Availability Zone", field: "Placement_AvailabilityZone", enableRowGroup: true, filter: 'agSetColumnFilter', minWidth: 180 },
+                    { headerName: "SpotOrNot", field: "InstanceLifecycle", enableRowGroup: true, filter: 'agSetColumnFilter', minWidth: 150 },
+                    { headerName: "Launch Time", field: "LaunchTime", sortable: true, minWidth: 200 }
+                ];
+
+                const dynamicColumnDefs = Object.keys(data[0]).filter(fieldName => 
+                    !definedColumnDefs.some(colDef => colDef.field === fieldName)
+                ).map(fieldName => ({
+                    headerName: fieldName,
+                    field: fieldName,
+                    minWidth: 150,
+                    filter: 'agTextColumnFilter',
+                    sortable: true
+                }));
+
+                const gridOptions = {
+                    enableCharts: true,
+                    rowSelection: 'multiple',
+                    enableRangeSelection: true,
+                    rowGroupPanelShow: "always",
+                    sideBar: {
+                        toolPanels: ['columns', 'filters'],
+                        position: 'right',
+                    },
+                    columnDefs: [...definedColumnDefs, ...dynamicColumnDefs],
+                    rowData: data,
+                    groupDisplayType: 'multipleColumns',
+                    autoGroupColumnDef: {
+                        // headerName: 'Group',
+                        minWidth: 200,
+                        cellRendererParams: {
+                            showOpenedGroup: true
+                        },
+                    },
+                    getRowId: params => params.data.InstanceId,  // Use InstanceId as row ID
+                    defaultColDef: {
+                        filter: true,
+                        floatingFilter: true,
+                        resizable: true,
+                        sortable: true
+                    },
+                    onGridReady: function(params) {
+                        gridApi = params.api;
+                        params.api.sizeColumnsToFit();
+
+                        // Set initial grouping by State and AWS Region
+                        params.api.setRowGroupColumns(['State_Name', 'Region']);
+                        params.api.refreshClientSideRowModel('group');
+
+                        initialChartState = saveChartState(); // Save the initial chart state
+                    },
+                    onSortChanged: function(params) {
+                        updateChartFromGrid();
+                    },
+                    onFilterChanged: function(params) {
+                        updateChartFromGrid();
+                    },
+                    getContextMenuItems: function(params) {
+                        return [
+                            'separator',
+                            'copy',
+                            'copyWithHeaders',
+                            'paste',
+                            {
+                                name: 'Terminate selected Instances',
+                                action: function() { customContextMenuHandler1('terminateEC2Instances', params) },
+                                icon: '<i class="fa fa-plus"></i>'
+                            },
+                            {
+                                name: 'Stop Selected Instances',
+                                action: function() { customContextMenuHandler1('stopEC2Instances', params) },
+                                icon: '<i class="fa fa-plus"></i>'
+                            },
+                            {
+                                name: 'Start Selected Instances',
+                                action: function() { customContextMenuHandler1('startEC2Instances', params) },
+                                icon: '<i class="fa fa-plus"></i>'
+                            },
+                            {
+                                name: 'Kill using Deadline data',
+                                action: function() { customContextMenuHandler2('useListToTerminateEC2Instances', params, 'preFlightFlag') },
+                                icon: '<i class="fa fa-minus"></i>'
+                            },
+                            {
+                                name: 'Termination Protection OFF',
+                                action: function() { customContextMenuHandler1('terminationProtectionOFFInstances', params) },
+                                icon: '<i class="fa fa-minus"></i>'
+                            },
+                            {
+                                name: 'Termination Protection ON',
+                                action: function() { customContextMenuHandler1('terminationProtectionONInstances', params) },
+                                icon: '<i class="fa fa-minus"></i>'
+                            },
+                        ];
+                    }
+                };
+
+                const eGridDiv = document.querySelector('#myGrid');
+                gridApi = agGrid.createGrid(eGridDiv, gridOptions);
+            }
+
+            function customContextMenuHandler1(action, params) {
+                const selectedData = getSelectedRowsData(params);
+
+                const payload = selectedData.map(row => ({
+                    InstanceId: row.InstanceId,
+                    Region: row.Region,
+                }));
+
+                window.sendToPython(action, payload);
+            }
+
+            function customContextMenuHandler2(action, params, preFlight = null) {
+                const selectedData = getSelectedRowsData(params);
+
+                const payload = selectedData.map(row => ({
+                    InstanceId: row.InstanceId,
+                    Region: row.Region,
+                }));
+
+                window.useFlaskRouteActions(action, payload, preFlight);
+            }
+
+            function getSelectedRowsData(params) {
+                return params.api.getSelectedRows();
+            }
+
+            function updateGrid(data) {
+                if (gridApi) {
+                    setTimeout(() => {
+                        const updatedRows = [];
+                        const addedRows = [];
+                        const removedRows = [];
+
+                        const allCurrentRows = new Map();
+                        gridApi.forEachNode(node => {
+                            if (node.data && node.data.InstanceId) {
+                                allCurrentRows.set(node.id, node.data);
+                            }
+                        });
+
+                        data.forEach(newRow => {
+                            const rowId = newRow.InstanceId;
+                            if (allCurrentRows.has(rowId)) {
+                                const currentRow = allCurrentRows.get(rowId);
+                                if (JSON.stringify(currentRow) !== JSON.stringify(newRow)) {
+                                    updatedRows.push(newRow);
+                                }
+                                allCurrentRows.delete(rowId);
+                            } else {
+                                addedRows.push(newRow);
+                            }
+                        });
+
+                        allCurrentRows.forEach((rowData, rowId) => {
+                            removedRows.push(rowData);
+                        });
+
+                        gridApi.applyTransactionAsync({
+                            update: updatedRows,
+                            add: addedRows,
+                            remove: removedRows
+                        });
+                    }, 0);
+                }
+            }
+
+            function updateChartFromGrid() {
+    if (!gridApi) return;
+
+    const rowData = [];
+    gridApi.forEachNodeAfterFilterAndSort(node => {
+        // Only include leaf nodes (non-group nodes)
+        if (!node.group) {
+            rowData.push(node.data);
+        }
+    });
+
+    // Data structure to hold counts for each region and instance type
+    const chartData = {};
+
+    rowData.forEach(item => {
+        const region = item.Region;
+        const instanceType = item.InstanceType;
+        const state = item.State_Name.toLowerCase();
+
+        if (!chartData[region]) {
+            chartData[region] = {};
+        }
+
+        if (!chartData[region][instanceType]) {
+            chartData[region][instanceType] = { running: 0, stopped: 0 };
+        }
+
+        if (state === 'running') {
+            chartData[region][instanceType].running += 1;
+        } else if (state === 'stopped') {
+            chartData[region][instanceType].stopped -= 1;  // Negative count for stopped instances
+        }
+    });
+
+    // Prepare series data for the chart
+    const series = [];
+
+    Object.keys(chartData).forEach(region => {
+        const regionData = chartData[region];
+        Object.keys(regionData).forEach(instanceType => {
+            series.push({
+                type: chartType,  // Dynamic based on the selected chart type
+                xKey: 'region',
+                yKey: 'count',
+                yName: instanceType,  // The name of the instance type for the legend
+                data: [{
+                    region: region,
+                    count: regionData[instanceType].running + chartData[region][instanceType].stopped,
+                }],
+                stacked: false,  // Stack the columns
+            });
+        });
+    });
+
+    const chartOptions = {
+        container: document.getElementById('myChart'),
+        autoSize: true,
+        theme: "ag-vivid-dark",
+        title: {
+            text: 'EC2 Instances by Region and Instance Type',
+            fontSize: 18
+        },
+        series: series,
+        axes: [
+            {
+                type: 'category',
+                position: 'bottom',
+                title: {
+                    text: 'Region'
+                }
+            },
+            {
+                type: 'number',
+                position: 'left',
+                title: {
+                    text: 'Instance Count'
+                },
+                label: {
+                    formatter: function (params) {
+                        return params.value.toString();
+                    }
+                }
+            }
+        ],
+        legend: {
+            position: 'right'
+        }
+    };
+
+    if (chart) {
+        agCharts.AgCharts.update(chart, chartOptions);  // Update the existing chart
+    } else {
+        chart = agCharts.AgCharts.create(chartOptions);  // Create the chart if it doesn't exist
+    }
+}
+
+            function saveChartState() {
+                if (!gridApi) return null;
+                return gridApi.getChartModels();
+            }
+
+            function restoreChartState(chartState) {
+                if (!gridApi || !chartState) return;
+                gridApi.restoreChartModels(chartState);
+            }
+
+            function resetChart() {
+                if (initialChartState) {
+                    restoreChartState(initialChartState);
+                } else {
+                    fetchData();
+                }
+            }
+
+            function setupUIComponents() {
+                console.log('Setting up buttons and dropdowns, gridApi is available');
+
+                function setupButton(buttonId, action) {
+                    const button = document.getElementById(buttonId);
+                    if (button) {
+                        button.addEventListener('click', () => {
+                            action(gridApi);
+                        });
+                    } else {
+                        console.error(`Button with ID ${buttonId} not found.`);
+                    }
+                }
+
+                function clearAllFilters(api) {
+                    api.setFilterModel(null);
+                }
+
+                function clearAllGroupings(api) {
+                    api.setRowGroupColumns([]);
+                }
+
+                setupButton('filterRenderGroupPresent', api => {
+                    clearAllFilters(api);
+                    api.setFilterModel({
+                        RenderGroup: { filterType: 'text', type: 'notEqual', filter: '' }
+                    });
+                });
+
+                setupButton('filterRenderGroupAbsent', api => {
+                    clearAllFilters(api);
+                    api.setFilterModel({
+                        RenderGroup: { filterType: 'text', type: 'equals', filter: '' }
+                    });
+                });
+
+                setupButton('clearRenderGroupFilter', api => {
+                    clearAllFilters(api);
+                });
+
+                setupButton('rowGroupingButtonMp', api => {
+                    clearAllGroupings(api);
+                    api.setRowGroupColumns(['RenderGroup']);
+                });
+
+                setupButton('rowGroupingButtonWESh', api => {
+                    clearAllGroupings(api);
+                    api.setRowGroupColumns(['WHOFROM', 'DOTEXTENSION', 'SHOTNAME']);
+                });
+
+                setupButton('clearAllFilters', clearAllFilters);
+                setupButton('clearAllGroupings', clearAllGroupings);
+            }
+
+            fetchData();
+            setInterval(fetchData, 100000); // DATA REFRESH INTERVAL IS HERE
+
+            function updateButtonState() {
+                if (updatesPaused) {
+                    toggleUpdatesButton.textContent = 'Resume Updates';
+                    toggleUpdatesButton.style.backgroundColor = '#aa0000';
+                } else {
+                    toggleUpdatesButton.textContent = 'Pause Updates';
+                    toggleUpdatesButton.style.backgroundColor = '#0088aa';
+                }
+            }
+
+            toggleUpdatesButton.addEventListener('click', function () {
+                updatesPaused = !updatesPaused;
+                updateButtonState();
+                if (!updatesPaused) {
+                    fetchData();
+                }
+            });
+
+            resetStateButton.addEventListener('click', function () {
+                resetChart();
+            });
+
+            document.getElementById('lineChartButton').addEventListener('click', function () {
+                chartType = 'line';
+                updateChartFromGrid();
+            });
+
+            document.getElementById('barChartButton').addEventListener('click', function () {
+                chartType = 'bar';
+                updateChartFromGrid();
+            });
+
+            setupUIComponents();
+        });
+    </script>
+</body>
+</html>

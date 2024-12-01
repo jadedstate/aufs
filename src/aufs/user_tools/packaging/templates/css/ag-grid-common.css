@@ -1,0 +1,103 @@
+
+/* Increase the height of the floating filter row */
+.ag-header-row.ag-floating-filter-header {
+    height: 50px; /* Adjust this value as needed */
+}
+
+/* Adjust the input box size within the floating filter */
+.ag-floating-filter-input input,
+.ag-floating-filter-input select {
+    height: 30px; /* Adjust height to fit within the floating filter row */
+    box-sizing: border-box; /* Ensures padding and borders are included in the height */
+}
+
+/* Adjust vertical alignment if necessary */
+.ag-floating-filter-input {
+    display: flex;
+    align-items: center; /* Centers the input vertically */
+    padding: 0 5px; /* Add padding on the sides */
+}
+
+.custom-filter-input {
+    width: calc(100% - 25px); /* Leave space for the button */
+    border: none;
+    padding: 5px;
+}
+
+.clear-btn {
+    width: 20px;
+    height: 20px;
+    margin-left: 5px;
+    cursor: pointer;
+}
+
+/* Add this CSS to your existing stylesheet */
+.ag-theme-custom .ag-floating-filter-button {
+    display: block;
+}
+
+.ag-theme-custom .ag-floating-filter-body {
+    display: block;
+}
+
+/* Targeting the status bar container */
+.ag-status-bar {
+    color: white; /* This changes the text color of the entire status bar to white */
+}
+
+/* If you want to target specific panels within the status bar */
+.ag-status-bar .ag-status-panel {
+    color: white; /* This changes the text color of each panel in the status bar */
+}
+
+/* Sometimes, labels or values within panels might need specific targeting */
+.ag-status-bar .ag-status-panel-label,
+.ag-status-bar .ag-status-panel-value {
+    color: white; /* This ensures that both labels and values within the panels are white */
+}
+
+.ag-column-drop-horizontal {
+    border-bottom-style: solid;
+    border-bottom-width: 1px;
+    border-bottom-color: #333333;
+}
+
+.ag-column-drop-horizontal-empty-message {
+    color: #999999;
+}
+
+.ag-virtual-list-container {
+    width: 500px;
+}
+
+.ag-filter-no-matches,
+.ag-set-filter-list .ag-set-filter-tree-list {
+    height: calc(var(--ag-list-item-height) * 20 )
+}
+
+        body, html {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+        #gridWrapper01 {
+            height: calc(100vh - 500px);
+            width: 100%;
+        }
+
+        #gridWrapper02 {
+            height: calc(100vh - 400px);
+            width: 100%;
+        }
+
+        #gridWrapper03 {
+            height: calc(100vh - 600px);
+            width: 100%;
+        }
+
+        /* Ensure the grid itself fills the wrapper */
+        #DLrenderStatsGrid01 {
+            height: 100%;
+            width: 100%;
+        }

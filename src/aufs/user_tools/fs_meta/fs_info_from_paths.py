@@ -41,7 +41,11 @@ def file_details_df_from_path(paths, client, project, shots_df, output_csv, use_
         print("No update required: No files found in the supplied paths.")
         return
 
-    # print(new_data_df)
+    # with pd.option_context(
+    #                     # 'display.max_columns', None, 
+    #                     # 'display.max_rows', None, 
+    #                     'display.max_colwidth', None):
+    #     print(new_data_df)
     # print("scraped! first up is hashedfile and entrytime columns")
     # new_data_df = add_hashedfile_entrytime_columns_noRoot(new_data_df, 'FILE')
     # print("now adding any client-project info we can find")
@@ -55,6 +59,12 @@ def file_details_df_from_path(paths, client, project, shots_df, output_csv, use_
     # print("using sequencer is next up")
     # print(new_data_df)
     new_data_df = sequencer(new_data_df)
+    with pd.option_context(
+                        'display.max_columns', None, 
+                        # 'display.max_rows', None, 
+                        'display.max_colwidth', None):
+        print(new_data_df)
+
     # print("sequenced, time to get dotextension filled")
     new_data_df = add_file_extension_column(new_data_df)
     # print("extensions added")

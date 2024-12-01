@@ -441,10 +441,11 @@ class sequenceWork:
 
             frame_number = file_base[sep_index + 1:]
             base_name = file_base[:sep_index]
+            separator = file_base[sep_index]
 
             if frame_number.isdigit() and len(frame_number) > 1:
                 base_name = base_name.replace(placeholder, ' ')
-                sequence_name = f"{base_name}.%0{len(frame_number)}d{file_extension}"
+                sequence_name = f"{base_name}{separator}%0{len(frame_number)}d{file_extension}"
                 df.at[index, 'SEQUENCENAME'] = sequence_name
                 df.at[index, 'SEQUENCEPOSITION'] = frame_number
                 df.at[index, 'PADDING'] = len(frame_number)

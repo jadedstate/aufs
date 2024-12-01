@@ -3,6 +3,7 @@
 import os
 import sys
 import pandas as pd
+from rapidfuzz import fuzz
 from PySide6.QtWidgets import (
     QApplication, QVBoxLayout, QHBoxLayout, QPushButton, QWidget, QTableView, QMessageBox, QComboBox, QStyledItemDelegate, 
     QStyle, QStyleOptionComboBox, QCheckBox, QAbstractItemView
@@ -312,24 +313,25 @@ class StringRemappingSnaggingWidget(QWidget):
         """
         dataframe["STATUS"] = dataframe["STATUS"].fillna("pending").astype(str).str.strip()
 
+
         duplicate_groups = dataframe.groupby(dedupe_column)
         collapsed_rows = []
 
         for name, group in duplicate_groups:
             # Separate valid and other rows
-            # print("Group found in collapse_duplicates: ")
-            # print(group)
             valid_rows = group[group["STATUS"] == "valid"]
             other_rows = group[group["STATUS"] != "valid"]
 
             # Collect dropdown values
-            dropdown_values = (
-                list(valid_rows[self.dropdown_column])  # Valid rows first
-                + list(other_rows[self.dropdown_column])  # Followed by the rest
-            )
+            valid_values = list(valid_rows[self.dropdown_column])  # Valid rows first
+            other_values = list(other_rows[self.dropdown_column])  # Non-valid rows
 
-            # Debugging
-            # print(f"Collapsed Row for {name}: Dropdown Values: {dropdown_values}")
+            # Apply fuzzy matching to reorder "other" values
+            if other_values:
+                other_values = self.apply_fuzzy_sorting(other_values, name)
+
+            # Combine valid values (always on top) with fuzzy-sorted other values
+            dropdown_values = valid_values + other_values
 
             # Store dropdown values as a comma-separated string
             collapsed_row = {
@@ -340,6 +342,18 @@ class StringRemappingSnaggingWidget(QWidget):
             collapsed_rows.append(collapsed_row)
 
         return pd.DataFrame(collapsed_rows)
+
+    def apply_fuzzy_sorting(self, dropdown_values, dedupe_key):
+        """
+        Reorder dropdown values based on fuzzy similarity to the dedupe key.
+        """
+        # Define a function to calculate similarity scores
+        def similarity(value):
+            return fuzz.partial_ratio(value.lower(), dedupe_key.lower())
+
+        # Sort dropdown values by similarity (descending order)
+        sorted_values = sorted(dropdown_values, key=similarity, reverse=True)
+        return sorted_values
 
     def reset_dataframe(self):
         """

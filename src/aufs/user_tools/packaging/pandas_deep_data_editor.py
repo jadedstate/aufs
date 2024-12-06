@@ -1,12 +1,15 @@
-# 
+# src/aufs/user_tools/packaging/pandas_deep_data_editor.py
 
 import os
 import sys
 import pandas as pd
 import uuid
+import random
+import string
+import re
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableView, QPushButton, QComboBox, QMessageBox, QInputDialog, QTreeWidgetItem, QTreeWidget,
-    QLineEdit, QTextEdit, QLabel, QWidget, QStyledItemDelegate, QMenu
+    QLineEdit, QTextEdit, QLabel, QWidget, QStyledItemDelegate, QMenu, QAbstractItemView, QCheckBox, QToolBar
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
@@ -16,7 +19,27 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 src_path = os.path.join(current_dir, '..', '..', '..')  # Adjust to point to the `src` folder
 sys.path.insert(0, src_path)
 
-from src.aufs.user_tools.editable_pandas_model import EditablePandasModel, EnhancedPandasModel, SortableTableView
+from src.aufs.user_tools.qtwidgets.widgets.editable_pandas_model import EditablePandasModel, EnhancedPandasModel, SortableTableView
+
+class DraggableTextInput(QLineEdit):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)  # Enable accepting drops
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasText():  # Check if the drag data contains text
+            event.accept()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        if event.mimeData().hasText():
+            dropped_text = event.mimeData().text()  # Extract the text from the drop
+            self.setText(dropped_text)  # Display it in the input box
+            print(f"Dropped text: {dropped_text}")  # Debugging output
+            event.accept()
+        else:
+            event.ignore()
 
 class CustomDelegate(QStyledItemDelegate):
     def __init__(self, value_options=None, parent=None):
@@ -84,6 +107,7 @@ class DeepEditor(QWidget):
         # Initialize button flags if not provided
         if button_flags is None:
             button_flags = {
+                'search_replace': True,
                 'add_row': True,
                 'delete_row': True,
                 'move_row_up': True,
@@ -98,14 +122,26 @@ class DeepEditor(QWidget):
                 'dtype_dropdown': True,
                 'reload': True,
                 'save': True,
-                'exit': True
+                'exit': False
             }
 
         # === Main Layout ===
         self.main_layout = QVBoxLayout(self)
 
-        # === Initialize EditablePandasModel ===
-        self.model = EditablePandasModel(self.dataframe, value_options=value_options, editable=True, parent=self)
+        # In the __init__ method, add this widget to the UI
+        self.temp_drag_input = DraggableTextInput(self)
+        self.temp_drag_input.setPlaceholderText("Drop here to test drag-and-drop...")
+        self.main_layout.addWidget(self.temp_drag_input)
+
+
+        # Updated model to EnhancedPandasModel
+        self.model = EnhancedPandasModel(
+            self.dataframe_input if self.dataframe_input is not None else pd.DataFrame(),
+            value_options=value_options,
+            editable=True,
+            dragNdrop=True,
+            auto_fit_columns=self.auto_fit_columns
+        )
         self.model.dataChanged.connect(self.track_changes)
 
         # === Central Layout ===
@@ -113,6 +149,12 @@ class DeepEditor(QWidget):
 
         # === Left side vertical button layout ===
         self.left_button_layout = QVBoxLayout()
+
+        self.search_replace_button = QPushButton("Search and Replace", self)
+        self.search_replace_button.setEnabled(button_flags.get('search_replace', True))
+        if not button_flags.get('add_row', True):
+            self.search_replace_button.hide()
+        self.left_button_layout.addWidget(self.search_replace_button)
 
         # Add Row button
         self.add_row_button = QPushButton("Add Row", self)
@@ -148,6 +190,10 @@ class DeepEditor(QWidget):
         self.table_view.setModel(self.model)
         delegate = CustomDelegate(value_options=value_options, parent=self.table_view)
         self.table_view.setItemDelegate(delegate)
+        self.table_view.setDragEnabled(True)
+        self.table_view.setAcceptDrops(True)
+        self.table_view.setDropIndicatorShown(True)
+        self.table_view.setDragDropMode(QAbstractItemView.DragDrop)
         self.central_layout.addWidget(self.table_view)
 
         # Apply auto-fitting of columns if enabled
@@ -250,6 +296,8 @@ class DeepEditor(QWidget):
         self.main_layout.addLayout(self.footer_layout)
 
         # === Button Connections ===
+
+        self.search_replace_button.clicked.connect(self.open_search_replace_dialog)
         self.add_row_button.clicked.connect(self.add_row)
         self.delete_row_button.clicked.connect(self.delete_selected_rows)
         self.add_column_button.clicked.connect(self.add_column)
@@ -276,6 +324,25 @@ class DeepEditor(QWidget):
             self.load_from_dataframe(self.dataframe_input)
         elif self.file_path:
             self.load_file()
+
+    def open_search_replace_dialog(self):
+        """
+        Opens the NestedEditor directly for search-and-replace functionality on the DataFrame.
+        The editor will allow users to perform search-and-replace seamlessly.
+        """
+        try:
+            # Pass the current DataFrame to the NestedEditor
+            editor = NestedEditor(self.model.get_dataframe(), parent=self)
+            editor.setWindowTitle("Search and Replace Editor")  # Optional: Customize window title
+            editor.exec_()
+
+            # Update the main DataFrame after the editor closes
+            updated_dataframe = editor.get_dataframe()
+            self.model.update_dataframe(updated_dataframe)
+
+            QMessageBox.information(self, "Success", "Search and Replace completed.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open Search and Replace: {str(e)}")
 
     def load_from_dataframe(self, dataframe):
         """Load directly from an in-memory DataFrame."""
@@ -371,20 +438,6 @@ class DeepEditor(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load CSV file: {str(e)}")
 
-    def delete_selected_rows(self):
-        """Deletes the currently selected rows."""
-        selected_rows = sorted(set(index.row() for index in self.table_view.selectionModel().selectedRows()), reverse=True)
-        if selected_rows:
-            self.model.delete_rows(selected_rows)
-            self.track_changes()  # Track changes after modifying rows
-
-    def delete_selected_columns(self):
-        """Deletes the currently selected columns."""
-        selected_columns = sorted(set(index.column() for index in self.table_view.selectionModel().selectedColumns()), reverse=True)
-        if selected_columns:
-            self.model.delete_columns(selected_columns)
-            self.track_changes()  # Track changes after modifying columns
-
     def open_context_menu(self, position):
         """Handle right-click event and directly show the nested structure."""
         index = self.table_view.indexAt(position)
@@ -404,14 +457,7 @@ class DeepEditor(QWidget):
 
     def preview_nested_data(self, row, column):
         """
-        Extract the nested data for a given cell and display in a preview buffer.
-
-        Args:
-            row (int): The row index of the selected cell.
-            column (int): The column index of the selected cell.
-
-        Returns:
-            pd.DataFrame: The preview buffer containing the nested components.
+        Extract the nested data for a given cell and return a single-row DataFrame for editing.
         """
         column_name = self.model._dataframe.columns[column]
         nested_data = self.model._dataframe.attrs.get("nested_data", {}).get(column_name, [])
@@ -420,32 +466,59 @@ class DeepEditor(QWidget):
             QMessageBox.warning(self, "No Nested Data", "No nested data available for this cell.")
             return None
 
-        # Create a DataFrame preview buffer for the nested components
-        preview_df = pd.DataFrame({"Components": nested_data[row]})
+        # Create a single-row DataFrame for editing
+        preview_df = pd.DataFrame([nested_data[row]], columns=[f"Component {i}" for i in range(len(nested_data[row]))])
         return preview_df
 
-    def edit_nested_data(self, row, column):
+    def generate_preview(self, updated_components):
         """
-        Edit the nested data for a given cell.
+        Generate the reassembled preview from the updated nested components.
+        """
+        return "".join(updated_components)  # Simply join components for now
+
+    def show_preview_dialog(self, compiled_result, apply_callback):
+        """
+        Show a dialog to preview the reassembled result and allow the user to confirm or cancel.
 
         Args:
-            row (int): The row index of the selected cell.
-            column (int): The column index of the selected cell.
+            compiled_result (str): The reassembled cell value.
+            apply_callback (function): The function to call to apply changes.
         """
-        # Extract nested data into a preview buffer
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Preview Changes")
+        layout = QVBoxLayout(dialog)
+
+        # Display the previewed value
+        preview_label = QLabel(f"Preview of Compiled Result: {compiled_result}")
+        layout.addWidget(preview_label)
+
+        # Buttons to confirm or cancel
+        button_layout = QHBoxLayout()
+        confirm_button = QPushButton("Apply", dialog)
+        cancel_button = QPushButton("Cancel", dialog)
+        button_layout.addWidget(confirm_button)
+        button_layout.addWidget(cancel_button)
+        layout.addLayout(button_layout)
+
+        # Connect buttons
+        confirm_button.clicked.connect(lambda: (apply_callback(), dialog.accept()))
+        cancel_button.clicked.connect(dialog.reject)
+
+        dialog.exec()
+
+    def edit_nested_data(self, row, column):
+        """Edit the nested data for a given cell."""
         preview_df = self.preview_nested_data(row, column)
         if preview_df is None:
             return  # No nested data to edit
 
-        # Launch the editor
         editor = NestedEditor(preview_df, self)
-        if editor.exec_() == QDialog.Accepted:
-            # Retrieve updated nested data from the editor
-            updated_df = editor.get_dataframe()
-            updated_components = updated_df["Components"].tolist()
+        editor.setAttribute(Qt.WA_DeleteOnClose)  # Allow the editor to run independently
 
-            # Apply changes back to the main DataFrame
-            self.apply_nested_updates(row, column, updated_components)
+        # Pass the current row and column context
+        editor.set_context(row, column)
+
+        editor.show()
 
     def apply_nested_updates(self, row, column, updated_components):
         """
@@ -485,7 +558,7 @@ class DeepEditor(QWidget):
         nested_edit_action = QAction("Edit Nested Components", self)
         nested_edit_action.triggered.connect(lambda: self.edit_nested_data(index.row(), index.column()))
         menu.addAction(nested_edit_action)
-        menu.exec_(self.table_view.viewport().mapToGlobal(position))
+        menu.exec(self.table_view.viewport().mapToGlobal(position))
 
     def save_file(self, partition_cols=None):
         """Save the DataFrame to a file based on file type."""
@@ -532,22 +605,6 @@ class DeepEditor(QWidget):
             self.load_csv()
             self.model.update_dataframe(self.dataframe)
 
-    def add_row(self):
-        """Adds a new row at the bottom."""
-        self.model.add_row()
-
-    def add_column(self):
-        column_name, ok = QInputDialog.getText(self, "Add Column", "Column name:")
-        if ok and column_name:
-            # Optionally, you can also ask for the data type if needed
-            dtype, ok_type = QInputDialog.getItem(
-                self, "Select Data Type", "Choose column data type:", ["object", "int64", "float64"], editable=False
-            )
-
-            if ok_type and dtype:
-                # Add the new column to the model
-                self.model.add_column(column_name=column_name, dtype=dtype)
-
     def move_row_up(self):
         index = self.table_view.currentIndex()
         if index.isValid():
@@ -580,16 +637,55 @@ class DeepEditor(QWidget):
                 # Update the selection to the new column
                 self.table_view.setCurrentIndex(self.table_view.model().index(index.row(), new_col_index))
 
+    def add_row(self):
+        self.model.add_row()
+
+    def add_column(self):
+        """Add a new column to the DataFrame, with an optional randomly generated column name."""
+        # Generate a random column name
+        random_column_name = f"Column_{''.join(random.choices(string.ascii_uppercase + string.digits, k=5))}"
+        
+        # Prompt the user for a column name, defaulting to the random name
+        column_name, ok = QInputDialog.getText(
+            self, 
+            "Add Column", 
+            "Column name (leave blank to use a randomly generated name):", 
+            text=random_column_name
+        )
+        
+        # Use the entered column name or the random name
+        if ok:
+            column_name = column_name.strip() or random_column_name  # Fallback to random name if input is empty
+            dtype, ok_type = QInputDialog.getItem(
+                self, 
+                "Select Data Type", 
+                "Choose column data type:",
+                self.model.get_valid_dtypes(), 
+                editable=False
+            )
+            if ok_type and dtype:
+                self.model.add_column(column_name=column_name, dtype=dtype)
+
+    def delete_selected_rows(self):
+        selected_rows = sorted(set(index.row() for index in self.table_view.selectionModel().selectedRows()), reverse=True)
+        if selected_rows:
+            self.model.delete_rows(selected_rows)
+            self.track_changes()
+
+    def delete_selected_columns(self):
+        selected_columns = sorted(set(index.column() for index in self.table_view.selectionModel().selectedColumns()), reverse=True)
+        if selected_columns:
+            self.model.delete_columns(selected_columns)
+            self.track_changes()
+
     def sort_column(self):
         index = self.table_view.currentIndex()
         if index.isValid():
             self.model.sort_column(index.column())
 
     def clear_selected_data(self):
-        """Clear the data in the currently selected cells."""
-        selection_model = self.table_view.selectionModel()
-        selected_indexes = selection_model.selectedIndexes()
-        self.model.clear_selection(selected_indexes)
+        selection = self.table_view.selectionModel().selectedIndexes()
+        self.model.clear_selection(selection)
 
     def set_column_type(self):
         """Sets the column's data type based on the dropdown selection."""
@@ -683,7 +779,7 @@ class DeepEditor(QWidget):
         # Show the NestedEditor with the converted DataFrame
         editor = NestedEditor(df, self)
 
-        if editor.exec_() == QDialog.Accepted:
+        if editor.exec() == QDialog.Accepted:
             # Convert the edited DataFrame back to an ndarray
             new_ndarray = editor.model.get_dataframe().to_numpy()
 
@@ -756,7 +852,7 @@ class DeepEditor(QWidget):
         # Add new item logic
         add_new_item_button.clicked.connect(lambda: self.add_new_item_to_list_or_dict(existing_items_combo, data_package))
 
-        dialog.exec_()
+        dialog.exec()
 
     def offer_conversion(self, item, data_package, node_uuid):
         """Offer to convert a string/object to a list or dict for nesting."""
@@ -783,7 +879,7 @@ class DeepEditor(QWidget):
         convert_to_dict_button.clicked.connect(lambda: self.convert_data_and_nest(item, "dict", node_uuid, dialog))
         cancel_button.clicked.connect(dialog.reject)
 
-        dialog.exec_()
+        dialog.exec()
 
     def convert_data_and_nest(self, item, target_type, node_uuid, dialog):
         """Convert the current data to a list or dict, then proceed with nesting."""
@@ -891,7 +987,7 @@ class DeepEditor(QWidget):
         save_button.clicked.connect(lambda: self.confirm_edit(item, text_box.toPlainText(), dialog))
         cancel_button.clicked.connect(dialog.reject)
 
-        dialog.exec_()
+        dialog.exec()
 
     def confirm_edit(self, item, new_value, dialog):
         """Confirm the edit and update the model."""
@@ -915,7 +1011,7 @@ class DeepEditor(QWidget):
 
         editor = NestedEditor(df, self)
 
-        if editor.exec_() == QDialog.Accepted:
+        if editor.exec() == QDialog.Accepted:
             # Get the updated DataFrame and convert it back to the original structure
             updated_df = editor.get_dataframe()
             if isinstance(nested_data, list):
@@ -953,57 +1049,240 @@ class DeepEditor(QWidget):
                 self.recurse_list(value, f"{path_str}.{field_name}")
 
 class NestedEditor(QDialog):
-    def __init__(self, dataframe, parent=None, is_struct=False, struct_schema=None):
+    def __init__(self, dataframe, parent=None, is_struct=False, struct_schema=None, auto_fit_columns=True):
         super().__init__(parent)
         self.setWindowTitle("Edit Nested Data" if not is_struct else "Edit Struct")
         self.resize(600, 400)
+        self.parent_editor = parent  # Reference to the parent editor (DeepEditor)
+        self.row = None
+        self.column = None
         self.is_struct = is_struct
         self.struct_schema = struct_schema  # Schema for the struct, if available
+        self.auto_fit_columns = auto_fit_columns  # Pass auto-fit behavior
         self.changes_made = False  # Track if any changes have been made
-        
-        # Layout setup
-        layout = QVBoxLayout(self)
-        self.model = EditablePandasModel(dataframe, editable=True)
+
+        # Handle empty or malformed DataFrames gracefully
+        if not dataframe.empty:
+            self.original_value = "".join(str(x) for x in dataframe.iloc[0].tolist() if x is not None)
+        else:
+            self.original_value = ""  # Fallback for empty DataFrame
+
+        self.dataframe = dataframe
+
+        # Enhanced Model for editing
+        self.model = EnhancedPandasModel(
+            self.dataframe, 
+            editable=True, 
+            auto_fit_columns=self.auto_fit_columns, 
+            dragNdrop=True
+        )
+        self.model.dataChanged.connect(self.update_preview)
+
+        # === Layout setup ===
+        self.main_layout = QVBoxLayout(self)
+
+        # Add Search-Replace Toolbar
+        self.add_search_replace_toolbar()
+
+        # Add a drag-and-drop test widget (for consistency with DeepEditor)
+        self.temp_drag_input = DraggableTextInput(self)
+        self.temp_drag_input.setPlaceholderText("Drop here to test drag-and-drop...")
+        self.main_layout.addWidget(self.temp_drag_input)
+
+        # === Live Preview Section ===
+        self.preview_layout = QVBoxLayout()
+        self.original_label = QLabel(f"Original: {self.original_value}", self)
+        self.original_label.setStyleSheet("color: grey; font-size: 12px;")
+        self.preview_label = QLabel(f"Preview: {self.original_value}", self)
+        self.preview_label.setStyleSheet("color: black; font-size: 14px; font-weight: bold;")
+        self.preview_layout.addWidget(self.original_label)
+        self.preview_layout.addWidget(self.preview_label)
+        self.main_layout.addLayout(self.preview_layout)
+
+        # === Table View for Nested Data ===
         self.table_view = QTableView(self)
         self.table_view.setModel(self.model)
-        layout.addWidget(self.table_view)
-        
-        # Add row/column controls
-        ne_button_layout = QHBoxLayout()
-        if not self.is_struct:  # Allow adding rows for lists/dicts, but not for structs
-            self.add_row_button = QPushButton("Add Row", self)
-            self.delete_row_button = QPushButton("Delete Row", self)
-            ne_button_layout.addWidget(self.add_row_button)
-            ne_button_layout.addWidget(self.delete_row_button)
-        
+        self.table_view.setDragEnabled(True)
+        self.table_view.setAcceptDrops(True)
+        self.table_view.setDropIndicatorShown(True)
+        self.table_view.setDragDropMode(QAbstractItemView.DragDrop)
+        self.main_layout.addWidget(self.table_view)
+
+        # Auto-fit columns if enabled
+        if self.auto_fit_columns:
+            self.table_view.resizeColumnsToContents()
+
+        # === Add row/column controls ===
+        self.control_layout = QHBoxLayout()
+
+        self.add_column_button = QPushButton("Add Column", self)
+        self.move_column_left_button = QPushButton("Move Column Left", self)
+        self.move_column_right_button = QPushButton("Move Column Right", self)
+        self.delete_column_button = QPushButton("Delete Column", self)
+        self.control_layout.addWidget(self.add_column_button)
+        self.control_layout.addWidget(self.move_column_left_button)
+        self.control_layout.addWidget(self.move_column_right_button)
+        self.control_layout.addWidget(self.delete_column_button)
+
+        self.add_row_button = QPushButton("Add Row", self)
+        self.delete_row_button = QPushButton("Delete Row", self)
+        self.control_layout.addWidget(self.add_row_button)
+        self.control_layout.addWidget(self.delete_row_button)
+
         self.move_row_up_button = QPushButton("Move Row Up", self)
         self.move_row_down_button = QPushButton("Move Row Down", self)
-        ne_button_layout.addWidget(self.move_row_up_button)
-        ne_button_layout.addWidget(self.move_row_down_button)
-        layout.addLayout(ne_button_layout)
+        self.control_layout.addWidget(self.move_row_up_button)
+        self.control_layout.addWidget(self.move_row_down_button)
+        self.main_layout.addLayout(self.control_layout)
 
-        # Add Save and Cancel buttons
-        save_cancel_layout = QHBoxLayout()
-        self.save_button = QPushButton("Save")
-        self.cancel_button = QPushButton("Cancel")
-        save_cancel_layout.addWidget(self.save_button)
-        save_cancel_layout.addWidget(self.cancel_button)
-        layout.addLayout(save_cancel_layout)
+        # === Save and Cancel buttons ===
+        self.save_cancel_layout = QHBoxLayout()
+        self.save_button = QPushButton("Save", self)
+        self.cancel_button = QPushButton("Cancel", self)
+        self.save_cancel_layout.addWidget(self.save_button)
+        self.save_cancel_layout.addWidget(self.cancel_button)
+        self.main_layout.addLayout(self.save_cancel_layout)
 
-        # Button connections
+        # === Button Connections ===
+        self.add_column_button.clicked.connect(self.add_column)
+        self.move_column_left_button.clicked.connect(self.move_column_left)
+        self.move_column_right_button.clicked.connect(self.move_column_right)
+        self.delete_column_button.clicked.connect(self.delete_selected_columns)
         self.add_row_button.clicked.connect(self.add_row)
-        self.delete_row_button.clicked.connect(self.delete_row)
+        self.delete_row_button.clicked.connect(self.delete_selected_rows)
         self.move_row_up_button.clicked.connect(self.move_row_up)
         self.move_row_down_button.clicked.connect(self.move_row_down)
         self.save_button.clicked.connect(self.save_changes)
         self.cancel_button.clicked.connect(self.close)
-        
-        # Track changes when editing
-        self.model.dataChanged.connect(self.track_changes)
+
+        # Auto-fit columns if enabled
+        if self.auto_fit_columns:
+            self.table_view.resizeColumnsToContents()
+
+    def add_search_replace_toolbar(self):
+        """Add a search-replace toolbar to the editor."""
+        toolbar = QToolBar("Search and Replace", self)
+        self.main_layout.addWidget(toolbar)
+
+        # Search field
+        toolbar.addWidget(QLabel("Search:", self))
+        self.search_input = QLineEdit(self)
+        toolbar.addWidget(self.search_input)
+
+        # Replace field
+        toolbar.addWidget(QLabel("Replace:", self))
+        self.replace_input = QLineEdit(self)
+        toolbar.addWidget(self.replace_input)
+
+        # Options: Case-sensitive and Whole-word
+        self.case_sensitive_checkbox = QCheckBox("Case Sensitive", self)
+        toolbar.addWidget(self.case_sensitive_checkbox)
+
+        self.whole_word_checkbox = QCheckBox("Whole Word", self)
+        toolbar.addWidget(self.whole_word_checkbox)
+
+        # Scope Selection
+        self.scope_selector = QComboBox(self)
+        self.scope_selector.addItems(["Selected Fields", "Entire Column", "Entire Row", "Entire Table"])
+        toolbar.addWidget(QLabel("Scope:", self))
+        toolbar.addWidget(self.scope_selector)
+
+        # Execute button
+        self.search_replace_button = QPushButton("Replace All", self)
+        toolbar.addWidget(self.search_replace_button)
+
+        # Connect the button to the search-replace method
+        self.search_replace_button.clicked.connect(self.search_replace)
+
+    def search_replace(self):
+        """Perform search-and-replace on the DataFrame based on the selected scope."""
+        search_term = self.search_input.text()
+        replace_term = self.replace_input.text()
+        case_sensitive = self.case_sensitive_checkbox.isChecked()
+        whole_word = self.whole_word_checkbox.isChecked()
+        scope = self.scope_selector.currentText()
+
+        if not search_term:
+            QMessageBox.warning(self, "Input Required", "Please enter a search term.")
+            return
+
+        flags = 0 if case_sensitive else re.IGNORECASE
+        regex = rf"\b{re.escape(search_term)}\b" if whole_word else re.escape(search_term)
+
+        def replace_func(value):
+            if not isinstance(value, str):
+                return value  # Skip non-string values
+            return re.sub(regex, replace_term, value, flags=flags)
+
+        # Determine scope and apply replacements
+        try:
+            if scope == "Selected Fields":
+                indexes = self.table_view.selectionModel().selectedIndexes()
+                for index in indexes:
+                    row, col = index.row(), index.column()
+                    self.dataframe.iat[row, col] = replace_func(self.dataframe.iat[row, col])
+
+            elif scope == "Entire Column":
+                indexes = self.table_view.selectionModel().selectedColumns()
+                for index in indexes:
+                    col = index.column()
+                    self.dataframe.iloc[:, col] = self.dataframe.iloc[:, col].map(replace_func)
+
+            elif scope == "Entire Row":
+                indexes = self.table_view.selectionModel().selectedRows()
+                for index in indexes:
+                    row = index.row()
+                    self.dataframe.iloc[row, :] = self.dataframe.iloc[row, :].map(replace_func)
+
+            elif scope == "Entire Table":
+                self.dataframe = self.dataframe.applymap(replace_func)
+
+            # Update the model to reflect changes in the table view
+            self.model.update_dataframe(self.dataframe)
+            QMessageBox.information(self, "Success", "Search and replace completed.")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to replace: {str(e)}")
+
+    def save_changes(self):
+        """Save changes to the parent or file."""
+        self.accept()  # Close the editor
+
+    def update_preview(self):
+        """Update the live preview as edits are made."""
+        current_value = "".join(str(x) for x in self.model.get_dataframe().iloc[0].tolist())
+        self.preview_label.setText(f"Preview: {current_value}")
+
+        # Update styles based on whether changes were made
+        if current_value != self.original_value:
+            self.preview_label.setStyleSheet("color: green; font-size: 14px; font-weight: bold;")
+        else:
+            self.preview_label.setStyleSheet("color: black; font-size: 14px; font-weight: bold;")
+        self.changes_made = current_value != self.original_value
+
+    def dragEnterEvent(self, event):
+        print("Drag Enter Event triggered in NestedEditor!")
+        super().dragEnterEvent(event)
+
+    def dropEvent(self, event):
+        print("Drop Event triggered in NestedEditor!")
+        super().dropEvent(event)
 
     def track_changes(self):
         """Mark that changes have been made to the data."""
         self.changes_made = True
+
+    def update_preview(self):
+        """Update the live preview as edits are made."""
+        current_value = "".join(self.model.get_dataframe().iloc[0].tolist())
+        self.preview_label.setText(f"Preview: {current_value}")
+
+        # Update styles based on whether changes were made
+        if current_value != self.original_value:
+            self.preview_label.setStyleSheet("color: green; font-size: 14px; font-weight: bold;")
+        else:
+            self.preview_label.setStyleSheet("color: black; font-size: 14px; font-weight: bold;")
+        self.changes_made = current_value != self.original_value
 
     def closeEvent(self, event):
         """Prompt the user to save changes when closing."""
@@ -1022,23 +1301,55 @@ class NestedEditor(QDialog):
         else:
             event.accept()
 
+    def set_context(self, row, column):
+        """Set the row and column context for updates."""
+        self.row = row
+        self.column = column
+
     def save_changes(self):
-        """Save changes and close the editor."""
-        self.changes_made = False  # Reset the changes tracking
+        """Save changes, update the parent, and close the editor."""
+        updated_components = self.model.get_dataframe().iloc[0].tolist()
+
+        # Push updates to the parent if context is set
+        if self.row is not None and self.column is not None:
+            self.parent_editor.apply_nested_updates(self.row, self.column, updated_components)
+
+        self.changes_made = False  # Reset change tracking
         self.accept()  # Close the dialog
-        self.parent().track_changes()  # Notify the parent that changes were made
+
+    def get_dataframe(self):
+        """Return the edited DataFrame."""
+        return self.model.get_dataframe()
 
     def add_row(self):
-        """Add a new row (for lists or dicts only)."""
-        if not self.is_struct:
-            self.model.add_row()
+        """Adds a new row at the bottom."""
+        self.model.add_row()
 
-    def delete_row(self):
-        """Delete the currently selected row (for lists or dicts only)."""
-        if not self.is_struct:
-            index = self.table_view.currentIndex()
-            if index.isValid():
-                self.model.delete_row(index.row())
+    def add_column(self):
+        """Add a new column to the DataFrame, with an optional randomly generated column name."""
+        # Generate a random column name
+        random_column_name = f"Column_{''.join(random.choices(string.ascii_uppercase + string.digits, k=5))}"
+        
+        # Prompt the user for a column name, defaulting to the random name
+        column_name, ok = QInputDialog.getText(
+            self, 
+            "Add Column", 
+            "Column name (leave blank to use a randomly generated name):", 
+            text=random_column_name
+        )
+        
+        # Use the entered column name or the random name
+        if ok:
+            column_name = column_name.strip() or random_column_name  # Fallback to random name if input is empty
+            dtype, ok_type = QInputDialog.getItem(
+                self, 
+                "Select Data Type", 
+                "Choose column data type:",
+                self.model.get_valid_dtypes(), 
+                editable=False
+            )
+            if ok_type and dtype:
+                self.model.add_column(column_name=column_name, dtype=dtype)
 
     def move_row_up(self):
         index = self.table_view.currentIndex()
@@ -1056,6 +1367,227 @@ class NestedEditor(QDialog):
                 # Update the selection to the new row
                 self.table_view.selectRow(new_row_index)
 
-    def get_dataframe(self):
-        """Return the edited DataFrame."""
-        return self.model.get_dataframe()
+    def move_column_left(self):
+        index = self.table_view.currentIndex()
+        if index.isValid():
+            new_col_index = self.model.move_column(index.column(), -1)
+            if new_col_index is not None:
+                # Update the selection to the new column
+                self.table_view.setCurrentIndex(self.table_view.model().index(index.row(), new_col_index))
+
+    def move_column_right(self):
+        index = self.table_view.currentIndex()
+        if index.isValid():
+            new_col_index = self.model.move_column(index.column(), 1)
+            if new_col_index is not None:
+                # Update the selection to the new column
+                self.table_view.setCurrentIndex(self.table_view.model().index(index.row(), new_col_index))
+
+    def sort_column(self):
+        index = self.table_view.currentIndex()
+        if index.isValid():
+            self.model.sort_column(index.column())
+
+    def delete_row(self):
+        """Delete the currently selected row (for lists or dicts only)."""
+        if not self.is_struct:
+            index = self.table_view.currentIndex()
+            if index.isValid():
+                self.model.delete_rows(index.row())
+
+    def delete_column(self):
+        """Delete the currently selected row (for lists or dicts only)."""
+        if not self.is_struct:
+            index = self.table_view.currentIndex()
+            if index.isValid():
+                self.model.delete_columns(index.row())
+
+    def delete_selected_rows(self):
+        """Deletes the currently selected rows."""
+        selected_rows = sorted(set(index.row() for index in self.table_view.selectionModel().selectedRows()), reverse=True)
+        if selected_rows:
+            self.model.delete_rows(selected_rows)
+            self.track_changes()  # Track changes after modifying rows
+
+    def delete_selected_columns(self):
+        """Deletes the currently selected columns."""
+        selected_columns = sorted(set(index.column() for index in self.table_view.selectionModel().selectedColumns()), reverse=True)
+        if selected_columns:
+            self.model.delete_columns(selected_columns)
+            self.track_changes()  # Track changes after modifying columns
+
+class SearchReplaceDialog(QDialog):
+    def __init__(self, parent, dataframe):
+        super().__init__(parent)
+        self.parent_editor = parent
+        self.dataframe = dataframe
+        self.setWindowTitle("Search and Replace")
+        self.resize(600, 400)
+
+        # Main Layout
+        layout = QVBoxLayout(self)
+
+        # === Search/Replace Fields ===
+        search_layout = QHBoxLayout()
+        search_label = QLabel("Search for:", self)
+        self.search_input = QLineEdit(self)
+        search_layout.addWidget(search_label)
+        search_layout.addWidget(self.search_input)
+
+        replace_layout = QHBoxLayout()
+        replace_label = QLabel("Replace with:", self)
+        self.replace_input = QLineEdit(self)
+        replace_layout.addWidget(replace_label)
+        replace_layout.addWidget(self.replace_input)
+
+        # === Options ===
+        options_layout = QVBoxLayout()
+        options_label = QLabel("Options:", self)
+        self.case_sensitive_checkbox = QCheckBox("Case Sensitive", self)
+        self.whole_word_checkbox = QCheckBox("Match Whole Word", self)
+        self.delimiter_input = QLineEdit(self)
+        self.delimiter_input.setPlaceholderText("Enter delimiters (comma-separated)")
+        options_layout.addWidget(options_label)
+        options_layout.addWidget(self.case_sensitive_checkbox)
+        options_layout.addWidget(self.whole_word_checkbox)
+        options_layout.addWidget(QLabel("Delimiters:", self))
+        options_layout.addWidget(self.delimiter_input)
+
+        # === Scope Selection ===
+        scope_layout = QVBoxLayout()
+        scope_label = QLabel("Apply to:", self)
+        self.scope_selector = QComboBox(self)
+        self.scope_selector.addItems(["Selected Fields", "Entire Column", "Entire Row", "Entire Table"])
+        scope_layout.addWidget(scope_label)
+        scope_layout.addWidget(self.scope_selector)
+
+        # === Buttons ===
+        button_layout = QHBoxLayout()
+        preview_button = QPushButton("Preview", self)
+        replace_button = QPushButton("Replace", self)
+        cancel_button = QPushButton("Cancel", self)
+        button_layout.addWidget(preview_button)
+        button_layout.addWidget(replace_button)
+        button_layout.addWidget(cancel_button)
+
+        # === Assemble Layouts ===
+        layout.addLayout(search_layout)
+        layout.addLayout(replace_layout)
+        layout.addLayout(options_layout)
+        layout.addLayout(scope_layout)
+        layout.addLayout(button_layout)
+
+        # === Button Connections ===
+        preview_button.clicked.connect(self.preview_changes)
+        replace_button.clicked.connect(self.apply_changes)
+        cancel_button.clicked.connect(self.reject)
+
+    def preview_changes(self):
+        """Preview changes based on search/replace options."""
+        search_term = self.search_input.text()
+        replace_term = self.replace_input.text()
+        scope = self.scope_selector.currentText()
+        case_sensitive = self.case_sensitive_checkbox.isChecked()
+        whole_word = self.whole_word_checkbox.isChecked()
+        delimiters = self.delimiter_input.text().split(",") if self.delimiter_input.text() else []
+
+        if not search_term:
+            QMessageBox.warning(self, "Input Required", "Please enter a search term.")
+            return
+
+        # Filter the DataFrame based on the selected scope
+        if scope == "Selected Fields":
+            indexes = self.parent().table_view.selectionModel().selectedIndexes()
+            affected_df = self.extract_data_by_indexes(indexes)
+        elif scope == "Entire Column":
+            indexes = self.parent().table_view.selectionModel().selectedColumns()
+            affected_df = self.extract_columns(indexes)
+        elif scope == "Entire Row":
+            indexes = self.parent().table_view.selectionModel().selectedRows()
+            affected_df = self.extract_rows(indexes)
+        else:  # Entire Table
+            affected_df = self.dataframe.copy()
+
+        # Log DataFrame state before processing
+        print("Affected DataFrame before replacement:")
+        print(affected_df)
+
+        # Perform the replacement and show a preview in a NestedEditor
+        modified_df = self.perform_search_replace(
+            affected_df, search_term, replace_term, case_sensitive, whole_word, delimiters
+        )
+
+        # Log DataFrame state after processing
+        print("Modified DataFrame:")
+        print(modified_df)
+
+        # Pass to NestedEditor
+        try:
+            nested_editor = NestedEditor(modified_df, parent=self)
+            nested_editor.exec_()
+        except Exception as e:
+            print(f"Error initializing NestedEditor: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to preview changes: {e}")
+
+    def apply_changes(self):
+        """Apply the changes from the preview to the DataFrame."""
+        
+    def extract_data_by_indexes(self, indexes):
+        """Extract data based on a set of selected indexes."""
+        if not indexes:
+            QMessageBox.warning(self, "No Selection", "No fields are selected.")
+            return pd.DataFrame()  # Return an empty DataFrame if nothing is selected
+
+        data = []
+        for index in indexes:
+            row, col = index.row(), index.column()
+            value = self.dataframe.iloc[row, col]
+            data.append([value])
+        return pd.DataFrame(data, columns=["Value"])
+
+    def extract_columns(self, indexes):
+        """Extract data based on selected columns."""
+        cols = [index.column() for index in indexes]
+        return self.dataframe.iloc[:, cols]
+
+    def extract_rows(self, indexes):
+        """Extract data based on selected rows."""
+        rows = [index.row() for index in indexes]
+        return self.dataframe.iloc[rows, :]
+
+    def perform_search_replace(self, dataframe, search_term, replace_term, case_sensitive, whole_word, delimiters):
+        """Perform the search-replace operation with the specified options."""
+        flags = 0 if case_sensitive else re.IGNORECASE
+        regex = rf"\b{re.escape(search_term)}\b" if whole_word else re.escape(search_term)
+
+        def replace_func(x):
+            if not isinstance(x, str):
+                return x  # Skip non-string values
+            if delimiters:
+                for delimiter in delimiters:
+                    parts = x.split(delimiter)
+                    parts = [re.sub(regex, replace_term, part, flags=flags) for part in parts]
+                    x = delimiter.join(parts)
+                return x
+            else:
+                return re.sub(regex, replace_term, x, flags=flags)
+
+        # Apply replacements element-wise
+        try:
+            return dataframe.applymap(replace_func)
+        except Exception as e:
+            print(f"Error during search-replace: {e}")
+            raise
+
+    @staticmethod
+    def replace_with_delimiters(value, regex, replace_term, delimiters, flags):
+        """Handle replacement with delimiters for whole-word matching."""
+        if not isinstance(value, str):
+            return value
+
+        for delimiter in delimiters:
+            parts = value.split(delimiter)
+            parts = [re.sub(regex, replace_term, part, flags=flags) for part in parts]
+            value = delimiter.join(parts)
+
+        return value

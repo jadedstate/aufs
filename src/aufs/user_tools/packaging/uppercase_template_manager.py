@@ -4,6 +4,7 @@ import os
 import sys
 import pandas as pd
 import shutil
+import re
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLabel, QPushButton, QFileDialog, QMessageBox, QInputDialog, QHBoxLayout, QSplitter, QSizePolicy
 )
@@ -14,6 +15,7 @@ src_path = os.path.join(current_dir, '..', '..', '..', '..')
 sys.path.insert(0, src_path)
 
 from src.aufs.user_tools.qtwidgets.widgets.cascading_panes_simple import CascadingPaneManager
+from src.aufs.user_tools.packaging.pandas_deep_data_editor import DeepEditor, NestedEditor
 
 class UppercaseTemplateManager(QWidget):
     def __init__(self, root_directory, client=None, project=None, recipient=None, root_job_path=None, task=None, parent=None):
@@ -104,6 +106,36 @@ class UppercaseTemplateManager(QWidget):
 
         layout.addLayout(self.pane_work_buttons_layout)
 
+        #
+        # SPLIT/DIVIDE HERE
+        #
+
+        self.template_editing_layout = QVBoxLayout()
+
+        self.template_editing_top_buttons_layout = QHBoxLayout()
+        # Add a Load button to load a DataFrame into DeepEditor
+        self.load_editor_button = QPushButton("Load Nested Editor", self)
+        self.load_editor_button.clicked.connect(self.load_editor_data)
+        self.template_editing_top_buttons_layout.addWidget(self.load_editor_button)
+
+        self.template_editing_layout.addLayout(self.template_editing_top_buttons_layout)
+
+        self.deep_editor_container = QVBoxLayout()
+        self.deep_editor = DeepEditor(
+            nested_mode=True,  # Enable nested mode
+            auto_fit_columns=True,
+            parent=self
+        )
+        self.deep_editor.setVisible(False)  # Initially hidden until loaded
+        self.deep_editor_container.addWidget(self.deep_editor)
+        self.template_editing_layout.addLayout(self.deep_editor_container)
+
+        layout.addLayout(self.template_editing_layout)
+
+        #
+        # SPLIT/DIVIDE HERE
+        #
+
         # Add a "Load Template" button to dynamically create the second set of panes
         self.load_template_button = QPushButton("Load Template", self)
         self.load_template_button.clicked.connect(self.add_template_panes)
@@ -176,7 +208,7 @@ class UppercaseTemplateManager(QWidget):
     def add_template_panes(self):
         """Dynamically add template cascading panes below the main UI."""
         # Prevent multiple sets of template panes
-        if hasattr(self, "template_cascading_pane_manager"):
+        if hasattr(self, "templating_cascading_pane_manager"):
             QMessageBox.information(self, "Already Loaded", "Template panes are already loaded.")
             return
 
@@ -185,51 +217,45 @@ class UppercaseTemplateManager(QWidget):
         self.template_splitter.setChildrenCollapsible(False)
 
         # Create a new cascading pane manager for templates
-        self.template_cascading_pane_manager = CascadingPaneManager(self.template_splitter)
-        self.template_cascading_pane_manager.set_data_receiver(self.receive_returned_template_data)
+        self.templating_cascading_pane_manager = CascadingPaneManager(self.template_splitter)
+        self.templating_cascading_pane_manager.set_data_receiver(self.receive_returned_templating_data)
 
         # Add the splitter to the layout
         self.template_panes_layout.addWidget(self.template_splitter)
 
         # Load initial data for the template panes
-        self.load_template_root()
+        self.load_templating_root()
 
-    def load_template_root(self):
+    def load_templating_root(self):
         """Load the root directory for template panes."""
-        template_root_directory = os.path.expanduser("~/.aufs/config/packaging/_templating")
-        if not os.path.exists(template_root_directory):
-            QMessageBox.critical(self, "Error", f"Template root directory '{template_root_directory}' does not exist.")
+        templating_root_directory = os.path.expanduser("~/.aufs/config/packaging/_templating")
+        if not os.path.exists(templating_root_directory):
+            QMessageBox.critical(self, "Error", f"Template root directory '{templating_root_directory}' does not exist.")
             return
 
         # Use the existing method to load and display the directory contents
         self.load_dir_contents_list(
-            directory=template_root_directory,
-            title="Available Templates",
-            pane_manager=self.template_cascading_pane_manager,
+            directory=templating_root_directory,
+            title="Available Template Snippets",
+            pane_manager=self.templating_cascading_pane_manager,
             filter_type="only_underscores"
         )
 
-    def load_template_panes(self):
-        """Load a new set of cascading panes for template work."""
-        template_directory = os.path.join(self.root_directory, "templates")
-        if not os.path.exists(template_directory):
-            QMessageBox.critical(self, "Error", "Template directory does not exist.")
-            return
-
-        # Load the template directory into the template panes
-        self.load_dir_contents_list(template_directory, "Template Pane", pane_manager=self.template_pane_manager)
-
-    def receive_returned_template_data(self, data):
+    def receive_returned_templating_data(self, data):
         """Handle data returned from the template cascading panes."""
         # print("Got some stuff returned to the template data receiver: ")
         # print(data)
         if data.empty:
             return
+        print("templating data returned: ")
+        print(data)
 
-        self.template_item = data.iloc[0]["Item"]
-        self.template_path = data.iloc[0]["Path"]
+        self.templating_item = data.iloc[0]["Item"]
+        self.templating_path = data.iloc[0]["Path"]
         object_type = data.iloc[0].get("OBJECTTYPE", "Unknown")  # Default to 'Unknown' if OBJECTTYPE is missing
-        # print(f"template item: {self.template_item}, template path: {self.template_path}, OBJECTTYPE: {object_type}")
+        self.currently_selected_item = self.templating_item
+        self.currently_selected_path = self.templating_path
+        # print(f"template item: {self.templating_item}, template path: {self.templating_path}, OBJECTTYPE: {object_type}")
 
         if object_type == "Variable":
             # Handle "Variable" OBJECTTYPE
@@ -241,49 +267,49 @@ class UppercaseTemplateManager(QWidget):
             df = pd.DataFrame({"Text": [usage_info]})
 
             # Display in the cascading panes
-            self.template_cascading_pane_manager.display_pane(
-                title=f"Variable: {self.template_item}",
+            self.templating_cascading_pane_manager.display_pane(
+                title=f"Variable: {self.templating_item}",
                 df=df,
                 pane_type="basic_text"
             )
-        elif os.path.isdir(self.template_path):
+        elif os.path.isdir(self.templating_path):
             # Handle directory: Load its contents into the template panes
             self.load_dir_contents_list(
-                directory=self.template_path,
-                title=f"Contents of {self.template_item}",
-                pane_manager=self.template_cascading_pane_manager,
+                directory=self.templating_path,
+                title=f"Contents of {self.templating_item}",
+                pane_manager=self.templating_cascading_pane_manager,
                 filter_type="only_underscores"  # Ensure template panes are updated
             )
-        elif os.path.isfile(self.template_path):
+        elif os.path.isfile(self.templating_path):
             # Handle file: Load its contents into the template panes
             try:
-                paths = [self.template_path]
+                paths = [self.templating_path]
                 self.load_file_contents_list(
                     paths,
-                    title=f"File: {self.template_item}",
-                    pane_manager=self.template_cascading_pane_manager
+                    title=f"File: {self.templating_item}",
+                    pane_manager=self.templating_cascading_pane_manager
                 )
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to read file '{self.template_item}': {e}")
+                QMessageBox.critical(self, "Error", f"Failed to read file '{self.templating_item}': {e}")
         else:
             # Handle unknown cases
-            QMessageBox.warning(self, "Unhandled Selection", f"Item: {self.template_item}\nPath: {self.template_path}")
+            QMessageBox.warning(self, "Unhandled Selection", f"Item: {self.templating_item}\nPath: {self.templating_path}")
 
     def rename_selected_item(self):
         """Rename the selected file or directory."""
-        if not self.selected_path:
+        if not self.currently_selected_path:
             QMessageBox.warning(self, "Invalid Request", "Please select something to rename.")
             return
 
         # Extract the current file/directory name
-        current_name, ext = os.path.splitext(os.path.basename(self.selected_path))
+        current_name, ext = os.path.splitext(os.path.basename(self.currently_selected_path))
         rename_name, ok = QInputDialog.getText(self, "Rename Item", "Enter new name:", text=current_name)
 
         if ok and rename_name.strip():
             # Construct the new path within the same directory
-            rename_path = os.path.join(os.path.dirname(self.selected_path), f"{rename_name.strip()}{ext}")
+            rename_path = os.path.join(os.path.dirname(self.currently_selected_path), f"{rename_name.strip()}{ext}")
             try:
-                os.rename(self.selected_path, rename_path)
+                os.rename(self.currently_selected_path, rename_path)
                 QMessageBox.information(self, "Success", f"Renamed to '{rename_name}'.\n\n---BE AWARE---\n\nYou will need to click on the parent directory\nin the previous pane to refresh and see the New Name")
                 self.reload_current_pane(replace_uuid="1_before")  # Refresh the pane to reflect the change
             except Exception as e:
@@ -291,13 +317,13 @@ class UppercaseTemplateManager(QWidget):
 
     def create_new_directory(self):
         """Create a new directory in the current path."""
-        if not os.path.isdir(self.selected_path):
+        if not os.path.isdir(self.currently_selected_path):
             QMessageBox.warning(self, "Invalid Selection", "Please select a valid directory to create a new folder.")
             return
 
         dir_name, ok = QInputDialog.getText(self, "New Directory", "Enter directory name:")
         if ok and dir_name.strip():
-            new_dir_path = os.path.join(self.selected_path, dir_name.strip())
+            new_dir_path = os.path.join(self.currently_selected_path, dir_name.strip())
             try:
                 os.makedirs(new_dir_path)
                 QMessageBox.information(self, "Success", f"Directory '{dir_name}' created.")
@@ -307,7 +333,7 @@ class UppercaseTemplateManager(QWidget):
 
     def create_new_template_file(self):
         """Create a new template file in the current directory."""
-        if not os.path.isdir(self.selected_path):
+        if not os.path.isdir(self.currently_selected_path):
             QMessageBox.warning(self, "Invalid Selection", "Please select a valid directory to create a template file.")
             return
 
@@ -315,7 +341,7 @@ class UppercaseTemplateManager(QWidget):
         if not ok or not file_name.strip():
             file_name = "new_template"  # Default name if user cancels or provides no input
 
-        new_file_path = os.path.join(self.selected_path, f"{file_name.strip()}.csv")
+        new_file_path = os.path.join(self.currently_selected_path, f"{file_name.strip()}.csv")
         try:
             # Create a DataFrame with the specified structure
             data = {
@@ -331,11 +357,11 @@ class UppercaseTemplateManager(QWidget):
 
     def copy_file(self):
         """Set the file to be copied."""
-        if not os.path.isfile(self.selected_path):
+        if not os.path.isfile(self.currently_selected_path):
             QMessageBox.warning(self, "Invalid Selection", "Please select a valid file to copy.")
             return
 
-        self.file_to_be_copied = self.selected_path
+        self.file_to_be_copied = self.currently_selected_path
         QMessageBox.information(self, "Copy File", f"Copied '{self.file_to_be_copied}'.")
 
     def paste_file(self):
@@ -344,7 +370,7 @@ class UppercaseTemplateManager(QWidget):
             QMessageBox.warning(self, "No File to Paste", "Please copy a file first.")
             return
 
-        if not os.path.isdir(self.selected_path):
+        if not os.path.isdir(self.currently_selected_path):
             QMessageBox.warning(self, "Invalid Destination", "Please select a valid directory to paste the file.")
             return
 
@@ -353,7 +379,7 @@ class UppercaseTemplateManager(QWidget):
         new_name, ok = QInputDialog.getText(self, "Paste File", "Enter new file name:", text=suggested_name)
 
         if ok and new_name.strip():
-            new_file_path = os.path.join(self.selected_path, new_name.strip())
+            new_file_path = os.path.join(self.currently_selected_path, new_name.strip())
             try:
                 shutil.copy(self.file_to_be_copied, new_file_path)
                 QMessageBox.information(self, "Success", f"File copied to '{new_file_path}'.")
@@ -446,7 +472,7 @@ class UppercaseTemplateManager(QWidget):
 
     def load_file_contents_list(self, file_paths, title, pane_manager=None):
         """
-        Load the contents of multiple files into a concatenated DataFrame and display in a pane.
+        Load the contents of multiple files into a concatenated DataFrame and display in a draggable pane.
 
         Args:
             file_paths (list): List of file paths to process.
@@ -459,7 +485,6 @@ class UppercaseTemplateManager(QWidget):
 
         for file_path in file_paths:
             if not os.path.isfile(file_path):
-                # print(f"Skipping non-file path: {file_path}")
                 continue
 
             try:
@@ -488,9 +513,10 @@ class UppercaseTemplateManager(QWidget):
         if combined_data:
             combined_df = pd.concat(combined_data, ignore_index=True)
 
-            # Display in the cascading panes
-            self.combined_df = combined_df
-            pane_manager.display_pane(title, combined_df, pane_type="list")
+            # Display in the cascading panes as a draggable list
+            pane_manager.display_pane(
+                title, combined_df, pane_type="list", is_sender=True, is_receiver=True
+            )
         else:
             QMessageBox.information(self, "No Data", "No valid files could be loaded.")
 
@@ -501,6 +527,8 @@ class UppercaseTemplateManager(QWidget):
 
         self.selected_item = data.iloc[0]["Item"]
         self.selected_path = data.iloc[0]["Path"]
+        self.currently_selected_item = self.selected_item
+        self.currently_selected_path = self.selected_path
         print("item:", self.selected_item, "  path:", self.selected_path)
 
         # print(f"Received Data: Item: {self.selected_item}, Path: {self.selected_path}")
@@ -525,6 +553,161 @@ class UppercaseTemplateManager(QWidget):
         else:
             QMessageBox.warning(self, "Unhandled Selection", f"Item: {self.selected_item}\nPath: {self.selected_path}")
 
+    def load_editor_data(self):
+        """Read the file at self.templating_path, prepare the data, and load it into DeepEditor."""
+        if not self.selected_path or not os.path.isfile(self.selected_path):
+            QMessageBox.warning(self, "No File Selected", "Please select a valid file to load.")
+            return
+
+        try:
+            df = self.load_template_file_to_df(self.selected_path)
+            df = self.template_file_deep_df(df)
+            df = self.create_nested_components(df)
+
+            # Load the DataFrame into the editor
+            self.deep_editor.load_from_dataframe(df)
+            self.deep_editor.setVisible(True)  # Make the editor visible
+            # QMessageBox.information(self, "File Loaded", f"Loaded data from {self.selected_path}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load the file: {e}")
+
+    def load_template_file_to_df(self, file_path, header=True, column_index=0):
+        """
+        Load a template CSV into a DataFrame and create a working DataFrame.
+
+        Args:
+            file_path (str): Path to the template file.
+            header (bool): Whether the file has headers.
+            column_index (int): Index of the column to use if no headers.
+
+        Returns:
+            pd.DataFrame: The loaded and staged DataFrame.
+        """
+        if not os.path.isfile(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        # Load the DataFrame
+        if header:
+            df = pd.read_csv(file_path)
+        else:
+            df = pd.read_csv(file_path, header=None)
+            if column_index >= len(df.columns):
+                raise ValueError(f"Invalid column index {column_index}. File has {len(df.columns)} columns.")
+            df.rename(columns={column_index: "PROVISIONEDLINK"}, inplace=True)
+
+        # Use the first column if "PROVISIONEDLINK" not found
+        if "PROVISIONEDLINK" not in df.columns:
+            df.rename(columns={df.columns[0]: "PROVISIONEDLINK"}, inplace=True)
+
+        if df["PROVISIONEDLINK"].isnull().all():
+            print("No valid data in the PROVISIONEDLINK column. Exiting peacefully.")
+            return None
+
+        return df
+
+    def template_file_deep_df(self, df):
+        """
+        Transform the input DataFrame by splitting `PROVISIONEDLINK` into segments.
+
+        Args:
+            df (pd.DataFrame): The input DataFrame with `PROVISIONEDLINK`.
+
+        Returns:
+            pd.DataFrame: A transformed DataFrame with additional split columns.
+        """
+        # Split `PROVISIONEDLINK` into segments by `/`
+        split_data = df["PROVISIONEDLINK"].str.split("/", expand=True)
+        split_columns = [f"Segment {i+1}" for i in range(split_data.shape[1])]
+
+        # Append these new columns to the working DataFrame
+        working_df = df.copy()
+        working_df[split_columns] = split_data
+
+        # Track new columns for later updates
+        working_df.attrs["split_columns"] = split_columns
+
+        return working_df
+
+    def create_nested_components(self, df):
+        """
+        Create nested lists for split columns in the DataFrame.
+        
+        Args:
+            df (pd.DataFrame): Input DataFrame with split columns created by `template_file_deep_df`.
+
+        Returns:
+            pd.DataFrame: Updated DataFrame with embedded lists for nested data.
+        """
+        # Retrieve split columns created by `template_file_deep_df`
+        split_columns = df.attrs.get("split_columns", [])
+        if not split_columns:
+            raise ValueError("No split columns found in DataFrame. Ensure `template_file_deep_df` was applied.")
+
+        df = self.embed_nested_lists(df, split_columns)
+
+        return df
+
+    def embed_nested_lists(self, df, columns):
+        """
+        Embed nested lists into specified columns while keeping main cell content intact.
+
+        Args:
+            df (pd.DataFrame): The DataFrame to process.
+            columns (list): List of column names to embed nested lists for.
+
+        Returns:
+            pd.DataFrame: The original DataFrame with nested data stored in `attrs`.
+        """
+        if "nested_data" not in df.attrs:
+            df.attrs["nested_data"] = {}
+
+        for column in columns:
+            if column not in df.columns:
+                raise ValueError(f"Column '{column}' not found in DataFrame.")
+            
+            # Generate nested components for each cell in the column
+            nested_lists = df[column].apply(self.split_into_components).tolist()
+            
+            # Store the nested lists in `attrs` under the column name
+            df.attrs["nested_data"][column] = nested_lists
+
+        return df
+
+    def split_into_components(self, value):
+        """
+        Split a string value into nested components while retaining delimiters.
+
+        Args:
+            value (str): The cell value to split.
+
+        Returns:
+            list: A list of components split by `_`, `-`, and `.` while keeping delimiters.
+        """
+        if pd.isnull(value) or not isinstance(value, str):
+            return []
+        return re.split(r'(_|-|\.)', value)
+
+    def insert_column(self, df, index, column_name, values=None):
+        """
+        Insert a new column into the DataFrame at the specified index.
+
+        Args:
+            df (pd.DataFrame): Target DataFrame.
+            index (int): Index where the column should be inserted.
+            column_name (str): Name of the new column.
+            values (list): Optional values for the column.
+
+        Returns:
+            pd.DataFrame: DataFrame with the new column inserted.
+        """
+        values = values or [None] * len(df)
+        if len(values) != len(df):
+            raise ValueError("Values must match the number of rows in the DataFrame.")
+
+        df.insert(index, column_name, values)
+        return df
+
     def file_browser(self):
         """Browse for template files."""
         dialog = QFileDialog(self)
@@ -544,7 +727,7 @@ class UppercaseTemplateManager(QWidget):
         root_directory = os.path.expanduser("~/.aufs/config")
         app = QApplication(sys.argv)
         manager = UppercaseTemplateManager(root_directory)
-        manager.resize(800, 600)
+        manager.resize(1600, 1400)
         manager.show()
         sys.exit(app.exec())
 

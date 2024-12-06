@@ -5,7 +5,74 @@ import pandas as pd
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QLabel, QComboBox, QSizePolicy, QListWidgetItem, QScrollArea
 )
-from PySide6.QtCore import Qt
+from PySide6.QtGui import QDrag, QDragEnterEvent, QDropEvent, QFontMetrics
+from PySide6.QtCore import Qt, QMimeData
+
+class DraggableListWidget(QListWidget):
+    def __init__(self, parent=None, is_sender=False, is_receiver=False, mime_type="text/plain"):
+        super().__init__(parent)
+        self.is_sender = is_sender
+        self.is_receiver = is_receiver
+        self.mime_type = mime_type
+        self.setDragEnabled(self.is_sender)
+        self.setAcceptDrops(self.is_receiver)
+
+        # Set drag-and-drop mode for internal moves or external handling
+        if self.is_sender and self.is_receiver:
+            self.setDragDropMode(QListWidget.DragDrop)
+        elif self.is_sender:
+            self.setDragDropMode(QListWidget.DragOnly)
+        elif self.is_receiver:
+            self.setDragDropMode(QListWidget.DropOnly)
+
+    def startDrag(self, supportedActions):
+        """Start drag operation with robust MIME data handling."""
+        current_item = self.currentItem()
+        if not current_item:
+            return
+
+        drag = QDrag(self)
+        mime_data = QMimeData()
+
+        # Prepare MIME data
+        item_text = current_item.text()
+        item_index = self.row(current_item)
+        # Add JSON-like structure to carry more information if needed
+        mime_payload = {
+            "text": item_text,
+            "index": item_index,
+            "source": "DraggableListWidget"
+        }
+
+        # Convert payload to a string or JSON format
+        import json
+        mime_data.setText(json.dumps(mime_payload))
+
+        drag.setMimeData(mime_data)
+        drag.exec_(supportedActions)
+
+    def dragEnterEvent(self, event):
+        """Handle the event when a drag enters the widget."""
+        if self.is_receiver and event.mimeData().hasFormat(self.mime_type):
+            event.accept()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        """Handle the event when an item is dropped."""
+        if self.is_receiver and event.mimeData().hasFormat(self.mime_type):
+            dropped_text = event.mimeData().data(self.mime_type).data().decode("utf-8")  # Decode properly
+            self.addItem(dropped_text)
+            event.accept()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        """Handle the event while dragging over the widget."""
+        if self.is_receiver and event.mimeData().hasFormat(self.mime_type):
+            event.accept()
+        else:
+            event.ignore()
 
 class CascadingPaneManager(QWidget):
     def __init__(self, parent=None):
@@ -52,7 +119,7 @@ class CascadingPaneManager(QWidget):
     def clear_downstream_panes(self, pane_uuid):
         """
         Clear all panes downstream of the given pane UUID using cascade_state.
-        
+
         Args:
             pane_uuid (str): The UUID of the reference pane. 
         """
@@ -67,18 +134,15 @@ class CascadingPaneManager(QWidget):
 
         # Remove the panes from layout and cascade_state
         for uuid in uuids_to_remove:
-            pane_to_remove = self.find_pane_by_uuid(uuid)
-            if pane_to_remove:
-                self.layout.removeWidget(pane_to_remove)
-                pane_to_remove.deleteLater()
-            # Remove from both cascade_state and pane_order
+            widget = self.cascade_state[uuid]["widget"]
+            if widget:
+                self.layout.removeWidget(widget)
+                widget.deleteLater()
+            # Reset selection state in cascade_state
             del self.cascade_state[uuid]
             self.pane_order.remove(uuid)
 
-        # print(f"DEBUG: Cleared downstream panes after UUID '{pane_uuid}'. Current state:")
-        # print(self.cascade_state)
-
-    def display_pane(self, title, df, pane_type="list"):
+    def display_pane(self, title, df, pane_type="list", is_sender=False, is_receiver=False, min_width=10, max_width=200):
         """Display a pane dynamically based on the DataFrame and pane type."""
         pane_uuid = self.create_pane_uuid()
         self.pane_order.append(pane_uuid)
@@ -87,35 +151,77 @@ class CascadingPaneManager(QWidget):
         self.pane_data[pane_uuid] = df
         self.pane_display_data[pane_uuid] = df  # Initialize with the full DataFrame
 
-        # Initialize tracking info for this pane
+        # Initialize tracking info for this pane early (without the widget)
         self.cascade_state[pane_uuid] = {
             "pane_index": len(self.pane_order) - 1,
             "selected_item": None,
             "selected_row_index": None,
             "title": title,
             "pane_type": pane_type,
-            "display_name": None  # New field
+            "widget": None,  # Widget reference will be added later
+            "display_name": None,  # New field
         }
 
-        # Remove panes to the right of the newly added pane
+        # Clear downstream panes before creating the new one
         self.clear_downstream_panes(pane_uuid)
         self.remove_panes_after(pane_uuid)
 
         # Build the pane based on its type
         pane = None
         if pane_type == "list":
-            pane = self.build_list_pane(title, df, pane_uuid)
+            pane = self.build_list_pane(title, df, pane_uuid, is_sender=is_sender)
+        elif pane_type == "receiver":
+            pane = self.build_receiver_pane(title, min_width, max_width)
         elif pane_type == "filterable_list":
             pane = self.build_filterable_list_pane(title, df, pane_uuid)
         elif pane_type == "basic_text":
             pane = self.build_basic_text_pane(title, df)
 
-        # Add the pane to the layout
         if pane:
+            # Add the pane to the layout
             self.layout.addWidget(pane)
 
-    def build_filterable_list_pane(self, title, df, pane_uuid):
-        """Build a pane with filtering capabilities."""
+            # Update the widget reference in cascade_state
+            self.cascade_state[pane_uuid]["widget"] = pane
+
+    def build_receiver_pane(self, title, min_width=10, max_width=200):
+        """Build a resizable receiver pane."""
+        pane = QWidget(self)
+        pane_layout = QVBoxLayout(pane)
+        pane.setLayout(pane_layout)
+
+        # Add a title
+        title_label = QLabel(title, pane)
+        title_label.setAlignment(Qt.AlignCenter)
+        pane_layout.addWidget(title_label)
+
+        # Add the resizable receiver pane
+        receiver = ResizableReceiverPane(pane, min_width=min_width, max_width=max_width)
+        pane.receiver_widget = receiver  # Attach receiver to pane for future access
+        pane_layout.addWidget(receiver)
+
+        return pane
+
+    def build_sender_pane(self, title, df, pane_uuid):
+        """Build a sender pane."""
+        pane = QWidget(self)
+        pane_layout = QVBoxLayout(pane)
+        pane.setLayout(pane_layout)
+
+        # Add a title
+        title_label = QLabel(title, pane)
+        title_label.setAlignment(Qt.AlignCenter)
+        pane_layout.addWidget(title_label)
+
+        # Add the sender pane
+        sender = SenderPane(pane)
+        pane.sender_widget = sender  # Attach sender to pane for future access
+        pane_layout.addWidget(sender)
+
+        return pane
+
+    def build_filterable_list_pane(self, title, df, pane_uuid, is_sender=False, is_receiver=False, mime_type="application/json"):
+        """Build a pane with filtering capabilities and optional drag-and-drop."""
         pane = QWidget(self)
         pane_layout = QVBoxLayout(pane)
         pane.setLayout(pane_layout)
@@ -134,11 +240,14 @@ class CascadingPaneManager(QWidget):
         )
         pane_layout.addWidget(filter_dropdown)
 
-        # Add a list widget populated with the full DataFrame
-        list_widget = QListWidget(pane)
+        # Add a draggable and droppable list widget
+        list_widget = DraggableListWidget(
+            parent=pane, is_sender=is_sender, is_receiver=is_receiver, mime_type=mime_type
+        )
+        pane.list_widget = list_widget  # Attach list_widget to pane as an attribute
         pane_layout.addWidget(list_widget)
 
-        # Check if DISPLAYNAME exists and populate the list widget
+        # Populate the list widget with items from the DataFrame
         for idx, row in df.iterrows():
             display_text = (
                 row["DISPLAYNAME"] if "DISPLAYNAME" in df.columns and pd.notna(row["DISPLAYNAME"])
@@ -158,10 +267,13 @@ class CascadingPaneManager(QWidget):
         # Store the initial DataFrame for filtering later
         self.pane_display_data[pane_uuid] = df
 
+        # Attach the pane to cascade_state for quick access in apply_filter
+        self.cascade_state[pane_uuid]["widget"] = pane
+
         return pane
 
-    def build_list_pane(self, title, df, pane_uuid):
-        """Build a list-based pane."""
+    def build_list_pane(self, title, df, pane_uuid, is_sender=False, is_receiver=False, mime_type="text/plain"):
+        """Build a customizable list-based pane."""
         pane = QWidget(self)
         pane_layout = QVBoxLayout(pane)
         pane.setLayout(pane_layout)
@@ -171,22 +283,24 @@ class CascadingPaneManager(QWidget):
         title_label.setAlignment(Qt.AlignCenter)
         pane_layout.addWidget(title_label)
 
-        # Add a list widget populated with the DataFrame
-        list_widget = QListWidget(pane)
-        # Check if DISPLAYNAME exists and populate the list widget
+        # Add a custom list widget
+        list_widget = DraggableListWidget(
+            parent=pane, is_sender=is_sender, is_receiver=is_receiver, mime_type=mime_type
+        )
+        pane.list_widget = list_widget
+
+        # Populate the list widget with items from the DataFrame
         for idx, row in df.iterrows():
-            display_text = (
-                row["DISPLAYNAME"] if "DISPLAYNAME" in df.columns and pd.notna(row["DISPLAYNAME"])
-                else row["Item"]
-            )
+            display_text = row.get("DISPLAYNAME", row["Item"])
             item = QListWidgetItem(display_text)
             item.setData(Qt.UserRole, idx)  # Store the DataFrame index as item data
             if row["OBJECTTYPE"] == "Directory":
-                item.setForeground(self.dir_text_color)  # Set color for directories
+                item.setForeground(self.dir_text_color)
             elif row["OBJECTTYPE"] == "File":
-                item.setForeground(self.file_text_color)  # Set color for files
+                item.setForeground(self.file_text_color)
             list_widget.addItem(item)
 
+        # Connect selection handling
         list_widget.itemClicked.connect(lambda item: self.handle_selection(item, pane_uuid))
         pane_layout.addWidget(list_widget)
 
@@ -198,10 +312,15 @@ class CascadingPaneManager(QWidget):
 
     def apply_filter(self, filter_index, pane_uuid):
         """Apply a filter to the pane's display DataFrame."""
-        print(f"DEBUG: Applying filter {filter_index} on pane '{pane_uuid}'")
-        original_df = self.pane_data[pane_uuid]
+        # print(f"DEBUG: Applying filter {filter_index} on pane '{pane_uuid}'")
 
-        # Determine the filtered DataFrame based on the dropdown selection
+        # Retrieve the original DataFrame for the specified pane
+        original_df = self.pane_data.get(pane_uuid)
+        if original_df is None:
+            print(f"DEBUG: No data found for pane '{pane_uuid}'.")
+            return
+
+        # Determine the filtered DataFrame based on the filter index
         if filter_index == 0:  # "All"
             filtered_df = original_df
         elif filter_index == 1:  # "Dirs only"
@@ -211,50 +330,73 @@ class CascadingPaneManager(QWidget):
         else:
             filtered_df = original_df  # Default to no filtering
 
-        # Update the display DataFrame
+        # Update the display DataFrame in cascade_state
         self.pane_display_data[pane_uuid] = filtered_df
 
-        # Update the list widget with the filtered data
-        pane = self.find_pane_by_uuid(pane_uuid)
-        if not pane or not hasattr(pane, "list_widget"):
-            print(f"DEBUG: Pane '{pane_uuid}' not found or missing list widget.")
+        # Retrieve the pane's widget directly from cascade_state
+        pane_info = self.cascade_state.get(pane_uuid)
+        if not pane_info or not pane_info.get("widget"):
+            print(f"DEBUG: Widget for pane '{pane_uuid}' not found.")
             return
 
+        pane = pane_info["widget"]
+
+        # Check for the presence of a list widget in the pane
+        if not hasattr(pane, "list_widget"):
+            print(f"DEBUG: Pane '{pane_uuid}' missing list widget.")
+            return
+
+        # Update the list widget with the filtered data
         list_widget = pane.list_widget
         list_widget.clear()  # Clear current items
-        for _, row in filtered_df.iterrows():
+        for idx, row in filtered_df.iterrows():
             item = QListWidgetItem(row["Item"])
+            item.setData(Qt.UserRole, idx)  # Store the DataFrame index as item data
             if row["OBJECTTYPE"] == "Directory":
                 item.setForeground(self.dir_text_color)  # Set color for directories
             elif row["OBJECTTYPE"] == "File":
                 item.setForeground(self.file_text_color)  # Set color for files
             list_widget.addItem(item)
 
+        # Reset selection state in cascade_state
+        self.clear_downstream_panes(pane_uuid)        
+        pane_info.update({"selected_item": None, "selected_row_index": None})
+
     def handle_selection(self, item, pane_uuid, refresh=False, replace_uuid="no"):
         """Handle user selection and pass the data to the receiver."""
-        if replace_uuid=="no":
+        if replace_uuid == "no":
             self.selected_pane = pane_uuid
-        elif replace_uuid!="1_before":
+        elif replace_uuid != "1_before":
             self.selected_pane = self.find_another_pane_uuid(pane_uuid, flag=replace_uuid)
-        elif replace_uuid!="1_after":
+        elif replace_uuid != "1_after":
             self.selected_pane = self.find_another_pane_uuid(pane_uuid, flag=replace_uuid)
-        # Get the current DataFrame for this pane
-        current_df = self.pane_display_data[self.selected_pane]
 
+        # Get the current DataFrame for this pane
+        current_df = self.pane_display_data.get(self.selected_pane)
+        if current_df is None or current_df.empty:
+            print(f"DEBUG: Current DataFrame for pane '{self.selected_pane}' is empty or not found.")
+            return
+
+        # Extract the selected item's text and associated row index
         if not refresh:
-            # Extract the selected item's text and associated row index
             selected_item = item.text()
             selected_row_index = item.data(Qt.UserRole)  # Retrieve the row index from the QListWidgetItem
         else:
-            # For a refresh, use the stored information
             selected_item = self.cascade_state[self.selected_pane]["selected_item"]
             selected_row_index = self.cascade_state[self.selected_pane]["selected_row_index"]
+
+        # Validate selected_row_index
+        if selected_row_index is None or selected_row_index < 0 or selected_row_index >= len(current_df):
+            print(f"DEBUG: Invalid selected_row_index: {selected_row_index}")
+            return
 
         # Update the pane info
         self.cascade_state[self.selected_pane].update({
             "selected_item": selected_item,
             "selected_row_index": selected_row_index,
         })
+
+        # Clear downstream panes
         self.clear_downstream_panes(self.selected_pane)
         # print("Current Pane setup: ")
         # print(self.cascade_state)
@@ -404,3 +546,75 @@ class CascadingPaneManager(QWidget):
         manager.display_pane("Root Pane", example_df)
         manager.show()
         sys.exit(app.exec())
+
+class ResizableReceiverPane(QLabel):
+    def __init__(self, parent=None, min_width=10, max_width=200):
+        super().__init__(parent)
+        self.setText("Drop Here")
+        self.setAlignment(Qt.AlignCenter)
+        self.setMinimumWidth(min_width)
+        self.max_width = max_width
+        self.setStyleSheet("border: 1px solid black; background-color: #f0f0f0; padding: 5px;")
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        """Accept the drag if the MIME type is correct."""
+        if event.mimeData().hasFormat("application/json"):
+            event.accept()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event: QDropEvent):
+        """Handle the drop and resize the widget dynamically."""
+        if event.mimeData().hasFormat("application/json"):
+            # Decode the MIME data
+            provenance_data = event.mimeData().data("application/json").data().decode()
+            self.setText(provenance_data)  # Update the label text
+
+            # Dynamically resize width to fit the text
+            metrics = QFontMetrics(self.font())
+            text_width = metrics.boundingRect(self.text()).width()
+            self.setFixedWidth(min(max(text_width + 20, self.minimumWidth()), self.max_width))
+            
+            event.accept()
+        else:
+            event.ignore()
+
+class SenderPane(QListWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDragEnabled(True)
+        self.add_sample_items()
+
+    def add_sample_items(self):
+        """Add some sample items to the sender pane."""
+        sample_data = [
+            {"name": "File A", "path": "/path/to/file_a", "type": "File"},
+            {"name": "Directory B", "path": "/path/to/dir_b", "type": "Directory"},
+        ]
+        for item_data in sample_data:
+            item = QListWidgetItem(item_data["name"])
+            item.setData(Qt.UserRole, item_data)  # Store the metadata
+            self.addItem(item)
+
+    def startDrag(self, supportedActions):
+        """Customize the drag operation to include provenance data."""
+        item = self.currentItem()
+        if item:
+            drag = QDrag(self)
+            mime_data = QMimeData()
+
+            # Include detailed provenance and metadata in the MIME data
+            provenance = {
+                "name": item.text(),
+                "metadata": item.data(Qt.UserRole),
+                "environment": {
+                    "timestamp": "2024-12-02T14:00:00Z",
+                    "user": "John Doe",
+                    "machine": "Workstation1",
+                },
+            }
+            mime_data.setData("application/json", json.dumps(provenance).encode())
+
+            drag.setMimeData(mime_data)
+            drag.exec_(supportedActions)

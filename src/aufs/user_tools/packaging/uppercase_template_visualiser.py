@@ -304,7 +304,7 @@ def main():
     # print(df)
 
     app = QApplication(sys.argv)
-    tree_only = True
+    tree_only = False
     if not tree_only:
         visualizer = FileTreeVisualizer(df, tree_only=tree_only)
         visualizer.show()

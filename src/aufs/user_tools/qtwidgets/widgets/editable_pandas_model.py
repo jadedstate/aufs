@@ -3,7 +3,7 @@
 import pandas as pd
 import json
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QMimeData
-from PySide6.QtWidgets import QMessageBox, QComboBox, QTableView, QMenu, QAbstractItemView
+from PySide6.QtWidgets import QMessageBox, QComboBox, QTableView, QMenu, QAbstractItemView, QInputDialog
 import uuid  # To generate UUIDs
 
 class EditablePandasModel(QAbstractTableModel):
@@ -754,39 +754,65 @@ class EnhancedPandasModel(EditablePandasModel):
             mime_data.setText(str(col))
         return mime_data
 
+    def flags(self, index):
+        """Enable drag-and-drop without interfering with column selection."""
+        if not index.isValid():
+            return Qt.NoItemFlags
+
+        flags = super().flags(index)
+
+        # Add drag-and-drop support for columns
+        if self.dragNdrop and index.column() >= 0:
+            flags |= Qt.ItemIsDragEnabled | Qt.ItemIsDropEnabled
+
+        # Allow column selection
+        flags |= Qt.ItemIsSelectable
+        return flags
+
     def moveColumn(self, source_col, target_col):
+        """Reorder columns based on drag-and-drop."""
         self.beginMoveColumns(QModelIndex(), source_col, source_col, QModelIndex(), target_col)
+
+        # Update column order
         col = self._column_order.pop(source_col)
         self._column_order.insert(target_col, col)
-        self.endMoveColumns()
 
+        # Reorder DataFrame columns if not UI-only
         if not self.ui_only:
             reordered_columns = [self._dataframe.columns[i] for i in self._column_order]
             self._dataframe = self._dataframe[reordered_columns]
+
+        self.endMoveColumns()
         self.layoutChanged.emit()
 
 class SortableTableView(QTableView):
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        # Enable custom context menu
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self.show_context_menu)
 
-        # Enable drag-and-drop for column reordering
-        self.setDragDropMode(QAbstractItemView.InternalMove)
+        # Enable drag-and-drop for rows
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
-        self.horizontalHeader().setSectionsMovable(True)
-        self.horizontalHeader().setDragEnabled(True)
+        self.setDragDropMode(QAbstractItemView.InternalMove)
 
-        # Disable sorting on header clicks
-        self.horizontalHeader().setSectionsClickable(False)
+        # Configure header for column drag-and-drop
+        header = self.horizontalHeader()
+        header.setSectionsMovable(True)
+        header.setDragEnabled(True)
+        header.setAcceptDrops(True)
 
-        # Enable header context menu
-        self.horizontalHeader().setContextMenuPolicy(Qt.CustomContextMenu)
-        self.horizontalHeader().customContextMenuRequested.connect(self.show_header_context_menu)
+        # Re-enable header clicks for selection
+        header.setSectionsClickable(True)  # Restore ability to click and select columns
+
+        # Set header context menu policy
+        header.setContextMenuPolicy(Qt.CustomContextMenu)
+        header.customContextMenuRequested.connect(self.show_header_context_menu)
 
     def show_context_menu(self, position):
-        """Context menu with explicit sort options."""
+        """Show context menu for table cells."""
         index = self.indexAt(position)
         if index.isValid():
             column = index.column()
@@ -797,19 +823,31 @@ class SortableTableView(QTableView):
             menu.exec_(self.viewport().mapToGlobal(position))
 
     def show_header_context_menu(self, position):
-        """Context menu with explicit sort options."""
-        index = self.indexAt(position)
-        if index.isValid():
-            column = index.column()
-            menu = QMenu()
-            menu.addAction("Sort Ascending", lambda: self.model().sort_column_ascending(column))
-            menu.addAction("Sort Descending", lambda: self.model().sort_column_descending(column))
-            menu.addAction("Reset Sort", lambda: self.model().reset_sort())
-            menu.exec_(self.viewport().mapToGlobal(position))
+        """Show context menu for column headers."""
+        logical_index = self.horizontalHeader().logicalIndexAt(position)
+        menu = QMenu()
+        menu.addAction("Delete Column", lambda: self.model().delete_columns([logical_index]))
+        menu.addAction("Rename Column", lambda: self.rename_column(logical_index))
+        menu.addAction("Sort Ascending", lambda: self.model().sort_column_ascending(logical_index))
+        menu.addAction("Sort Descending", lambda: self.model().sort_column_descending(logical_index))
+        menu.addAction("Reset Sort", lambda: self.model().reset_sort())
+        menu.exec_(self.horizontalHeader().viewport().mapToGlobal(position))
+
+    def rename_column(self, logical_index):
+        """Prompt user to rename a column."""
+        model = self.model()
+        if not model:
+            return
+        column_name = model._dataframe.columns[logical_index]
+        new_name, ok = QInputDialog.getText(self, "Rename Column", f"Enter new name for column '{column_name}':")
+        if ok and new_name.strip():
+            model._dataframe.rename(columns={column_name: new_name.strip()}, inplace=True)
+            model.layoutChanged.emit()
 
     def dropEvent(self, event):
+        """Handle drag-and-drop events."""
         super().dropEvent(event)
-        index = self.indexAt(event.pos())  # Get the index under the cursor
+        index = self.indexAt(event.pos())
         if index.isValid():
             print(f"Dropped at row: {index.row()}, column: {index.column()}")
         else:

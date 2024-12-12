@@ -1171,16 +1171,10 @@ class RequestorUI(QWidget):
         self.recipient = ''
         self.session_name = ''
         self.request_name = ''
+        not_clients = ["vendors", "OUT", "packaging", "IN"]
         for client in self.session_manager.get_clients():
-            # Remove the item with the text "vendors"
-            # print("Client is: ",client)
-            if client == "vendors":
+            if client in not_clients:
                 continue
-            if client == "OUT":
-                continue
-            if client == "packaging":
-                continue
-
 
             # Add "New Client" or other client
             if client == "New Client":
@@ -1674,7 +1668,7 @@ class RequestorUI(QWidget):
 
         # Get the list of CSV files in the directory
         options = sorted([f for f in os.listdir(source_dir) if f.endswith(".csv")])
-        options.append("New Scrape")  # Add the "New Scrape" option
+        # options.append("New Scrape")  # Add the "New Scrape" option
 
         # Show the selection dialog
         dialog = ListInputDialog(self, "Select Source Files CSV", options)
@@ -1682,7 +1676,7 @@ class RequestorUI(QWidget):
             selected = dialog.get_result()
 
             # Handle "New Scrape" option
-            if selected == "New Scrape":
+            if selected == "New...":
                 # Wrap DirectoryLoaderUI in a QDialog
                 loader_dialog = QDialog(self)
                 loader_dialog.setWindowTitle("Directory Loader")
@@ -2053,7 +2047,11 @@ class SessionManager:
     def add_new_client(self, client):
         self.client = client
         client_path = os.path.join(self.root_directory, client)
+        client_in_path = os.path.join(self.root_directory, "IN", self.client)
+        client_out_path = os.path.join(self.root_directory, "OUT", self.client)
         os.makedirs(client_path, exist_ok=True)
+        os.makedirs(client_in_path, exist_ok=True)
+        os.makedirs(client_out_path, exist_ok=True)
 
     def add_new_project(self, client, project):
         self.project = project
@@ -2066,13 +2064,47 @@ class SessionManager:
         if not os.path.exists(shots_file):
             df = pd.DataFrame(columns=["SHOTNAME", "ALTSHOTNAME", "FIRSTFRAME", "LASTFRAME"])
             df.to_csv(shots_file, index=False)
+        
+        io_path = os.path.join(job_path, "IO")
+        os.makedirs(io_path, exist_ok=True)
+
+        client_in = os.path.join(self.root_directory, "IN", "client", client, project)
+        client_out = os.path.join(self.root_directory, "OUT", "client", client, project)
+        os.makedirs(client_in, exist_ok=True)
+        os.makedirs(client_out, exist_ok=True)
+
+        from_client_path = os.path.join(io_path, "from_client")
+        to_client_path = os.path.join(io_path, "to_client")
+        rel_client_in = os.path.join("../../../IN/client", client, project)
+        rel_client_out = os.path.join("../../../OUT/client", client, project)
+        # Create symlinks
+        try:
+            os.symlink(rel_client_in, from_client_path)
+            print(f"Created symlink: {from_client_path} -> {rel_client_in}")
+        except FileExistsError:
+            print(f"Symlink already exists: {from_client_path}")
+
+        try:
+            os.symlink(rel_client_out, to_client_path)
+            print(f"Created symlink: {to_client_path} -> {rel_client_out}")
+        except FileExistsError:
+            print(f"Symlink already exists: {to_client_path}")
 
     def add_new_recipient(self, client, project, recipient_name):
         self.recipient = recipient_name
-        vendor_path = os.path.join(self.root_directory, client, project, "packaging", recipient_name)
+        self.job_root_dir = os.path.join(self.root_directory, client, project)
+        vendor_path = os.path.join(self.job_root_dir, "packaging", recipient_name)
         recipient_path = os.path.join(self.root_directory, "vendors", recipient_name, project)
+        recipient_in = os.path.join(self.root_directory, "IN", "vendor", self.recipient, project)
+        recipient_out = os.path.join(self.root_directory, "OUT", "vendor", self.recipient, project)
+        from_recipient = os.path.join(self.job_root_dir, "IO", f"from_{self.recipient}")
+        to_recipient = os.path.join(self.job_root_dir, "IO", f"to_{self.recipient}")
         os.makedirs(recipient_path, exist_ok=True)
+        os.makedirs(recipient_in, exist_ok=True)
+        os.makedirs(recipient_out, exist_ok=True)
         self.create_relative_symlink(recipient_path, vendor_path)
+        self.create_relative_symlink(recipient_in, from_recipient)
+        self.create_relative_symlink(recipient_out, to_recipient)
 
     def add_new_session(self, client, project, recipient, session_name):
         self.session_name = session_name

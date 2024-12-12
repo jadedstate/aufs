@@ -168,7 +168,7 @@ class StringRemappingSnaggingWidget(QWidget):
         if self.show_only_dupes:
             self.collapsed_dataframe = self.filter_only_duplicates(self.collapsed_dataframe)
 
-        # Model setup with auto_fit_columns disabled by default
+        # Model setup
         self.model = EnhancedPandasModel(
             dataframe=self.collapsed_dataframe,
             value_options={self.dropdown_column: dataframe[self.dropdown_column].unique()},

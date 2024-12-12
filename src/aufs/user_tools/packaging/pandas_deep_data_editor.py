@@ -128,10 +128,10 @@ class DeepEditor(QWidget):
         # === Main Layout ===
         self.main_layout = QVBoxLayout(self)
 
-        # In the __init__ method, add this widget to the UI
-        self.temp_drag_input = DraggableTextInput(self)
-        self.temp_drag_input.setPlaceholderText("Drop here to test drag-and-drop...")
-        self.main_layout.addWidget(self.temp_drag_input)
+        # # In the __init__ method, add this widget to the UI
+        # self.temp_drag_input = DraggableTextInput(self)
+        # self.temp_drag_input.setPlaceholderText("Drop here to test drag-and-drop...")
+        # self.main_layout.addWidget(self.temp_drag_input)
 
 
         # Updated model to EnhancedPandasModel
@@ -143,6 +143,7 @@ class DeepEditor(QWidget):
             auto_fit_columns=self.auto_fit_columns
         )
         self.model.dataChanged.connect(self.track_changes)
+        self.model.dataChanged.connect(self.handle_data_change)
 
         # === Central Layout ===
         self.central_layout = QHBoxLayout()
@@ -186,7 +187,7 @@ class DeepEditor(QWidget):
         self.central_layout.addLayout(self.left_button_layout)
 
         # === TableView for displaying the DataFrame ===
-        self.table_view = QTableView(self)
+        self.table_view = SortableTableView(self)
         self.table_view.setModel(self.model)
         delegate = CustomDelegate(value_options=value_options, parent=self.table_view)
         self.table_view.setItemDelegate(delegate)
@@ -194,6 +195,8 @@ class DeepEditor(QWidget):
         self.table_view.setAcceptDrops(True)
         self.table_view.setDropIndicatorShown(True)
         self.table_view.setDragDropMode(QAbstractItemView.DragDrop)
+        self.table_view.setItemDelegate(CustomDelegate(value_options=value_options, parent=self.table_view))
+
         self.central_layout.addWidget(self.table_view)
 
         # Apply auto-fitting of columns if enabled
@@ -317,6 +320,123 @@ class DeepEditor(QWidget):
             self.enable_nested_mode()
 
         self.load_data()
+
+    def handle_data_change(self, top_left_index, bottom_right_index, roles):
+        """
+        Handle updates to the DataFrame when a cell is edited.
+        Recalculates the entire PROVISIONEDLINK column after any edit.
+        Ensures nested data is synchronized for edited cells.
+        """
+        if not roles or Qt.EditRole not in roles:
+            return
+
+        # Get the edited DataFrame
+        df = self.model.get_dataframe()
+
+        # Iterate over the edited range
+        for row in range(top_left_index.row(), bottom_right_index.row() + 1):
+            for col in range(top_left_index.column(), bottom_right_index.column() + 1):
+                column_name = df.columns[col]
+
+                # Ensure nested data exists for the column
+                if "nested_data" not in df.attrs:
+                    df.attrs["nested_data"] = {}
+                if column_name not in df.attrs["nested_data"]:
+                    df.attrs["nested_data"][column_name] = [[] for _ in range(len(df))]
+
+                # Split the updated value into nested components
+                updated_value = df.iat[row, col]
+                df.attrs["nested_data"][column_name][row] = self.split_into_components(updated_value)
+
+        # Recalculate PROVISIONEDLINK
+        self.update_provisioned_links()
+
+        # Emit layoutChanged to refresh the view
+        self.model.layoutChanged.emit()
+
+    def update_provisioned_links(self):
+        """
+        Recalculates the PROVISIONEDLINK column for all rows.
+        Runs nested component creation before updating links.
+        """
+        self.create_nested_components()  # Ensure nested components are updated
+
+        df = self.model.get_dataframe()
+
+        if "PROVISIONEDLINK" not in df.columns:
+            df["PROVISIONEDLINK"] = None
+
+        for row in range(len(df)):
+            provisioned_columns = df.columns[2:]
+            joined_value = "/".join(
+                str(df.at[row, col]) for col in provisioned_columns if pd.notnull(df.at[row, col])
+            )
+            df.at[row, "PROVISIONEDLINK"] = joined_value
+
+        self.model.layoutChanged.emit()
+
+    def update_provisioned_link_for_row(self, row):
+        """
+        Updates the PROVISIONEDLINK value for a single row.
+        Concatenates the values of all columns from the 3rd onward.
+        """
+        df = self.model.get_dataframe()
+        provisioned_columns = df.columns[2:]  # Get columns from the 3rd column onward
+
+        joined_value = "/".join(
+            str(df.at[row, col]) for col in provisioned_columns if pd.notnull(df.at[row, col])
+        )
+        df.at[row, "PROVISIONEDLINK"] = joined_value  # Update the column for the given row
+
+        print(f"Row {row}: PROVISIONEDLINK updated to {joined_value}")
+
+    def create_nested_components(self):
+        """
+        Create nested lists for split columns in the DataFrame.
+        """
+        df = self.model.get_dataframe()
+        split_columns = df.attrs.get("split_columns", [])
+
+        # Generate split columns if not already present
+        if not split_columns:
+            split_data = df["PROVISIONEDLINK"].str.split("/", expand=True)
+            split_columns = [f"Segment {i+1}" for i in range(split_data.shape[1])]
+            df[split_columns] = split_data
+            df.attrs["split_columns"] = split_columns
+
+        # Embed nested lists
+        self.embed_nested_lists(split_columns)
+
+        # Reflect changes in the model
+        self.model.update_dataframe(df)
+
+    def embed_nested_lists(self, columns):
+        """
+        Embed nested lists into specified columns while keeping the main DataFrame intact.
+        """
+        df = self.model.get_dataframe()
+
+        if "nested_data" not in df.attrs:
+            df.attrs["nested_data"] = {}
+
+        for column in columns:
+            if column not in df.columns:
+                raise ValueError(f"Column '{column}' not found in DataFrame.")
+
+            # Generate nested components for each cell in the column
+            nested_lists = df[column].apply(self.split_into_components).tolist()
+            df.attrs["nested_data"][column] = nested_lists
+
+        # Reflect changes in the model
+        self.model.update_dataframe(df)
+
+    def split_into_components(self, value):
+        """
+        Split a string value into nested components while retaining delimiters.
+        """
+        if pd.isnull(value) or not isinstance(value, str):
+            return []
+        return re.split(r'(_|-|\.)', value)
 
     def load_data(self):
         """Load data from a DataFrame or file."""
@@ -544,9 +664,14 @@ class DeepEditor(QWidget):
         new_value = "".join(updated_components)
         df.at[row, column_name] = new_value  # Update the main DataFrame cell value
 
+        # Additional pass to update `PROVISIONEDLINK`
+        provisioned_columns = df.columns[2:]  # Get columns from the 3rd column onward
+        joined_value = "/".join(str(df.at[row, col]) for col in provisioned_columns if pd.notnull(df.at[row, col]))
+        df.at[row, "PROVISIONEDLINK"] = joined_value  # Update `PROVISIONEDLINK`
+
         # Reflect changes in the UI
         self.model.layoutChanged.emit()
-        QMessageBox.information(self, "Update Successful", f"Cell updated to: {new_value}")
+        QMessageBox.information(self, "Update Successful", f"Cell updated to: {new_value}\nPROVISIONEDLINK: {joined_value}")
 
     def show_context_menu(self, position):
         """Display a custom context menu for nested editing."""
@@ -644,27 +769,52 @@ class DeepEditor(QWidget):
         """Add a new column to the DataFrame, with an optional randomly generated column name."""
         # Generate a random column name
         random_column_name = f"Column_{''.join(random.choices(string.ascii_uppercase + string.digits, k=5))}"
-        
+
         # Prompt the user for a column name, defaulting to the random name
         column_name, ok = QInputDialog.getText(
-            self, 
-            "Add Column", 
-            "Column name (leave blank to use a randomly generated name):", 
+            self,
+            "Add Column",
+            "Column name (leave blank to use a randomly generated name):",
             text=random_column_name
         )
-        
-        # Use the entered column name or the random name
+
         if ok:
             column_name = column_name.strip() or random_column_name  # Fallback to random name if input is empty
             dtype, ok_type = QInputDialog.getItem(
-                self, 
-                "Select Data Type", 
+                self,
+                "Select Data Type",
                 "Choose column data type:",
-                self.model.get_valid_dtypes(), 
+                self.model.get_valid_dtypes(),
                 editable=False
             )
             if ok_type and dtype:
+                # Add the column via the model
                 self.model.add_column(column_name=column_name, dtype=dtype)
+
+                # Initialize nested data for the new column
+                df = self.model.get_dataframe()
+                if "nested_data" not in df.attrs:
+                    df.attrs["nested_data"] = {}
+                df.attrs["nested_data"][column_name] = [[] for _ in range(len(df))]
+
+                # Recalculate PROVISIONEDLINK to account for the new column
+                self.update_provisioned_links()
+
+                # Synchronize nested data structures
+                self.sync_nested_data_with_columns()
+
+                # Notify the model that the structure has changed
+                self.model.layoutChanged.emit()
+
+    def sync_nested_data_with_columns(self):
+        """Synchronize the nested data structure with the current column order."""
+        df = self.model.get_dataframe()
+        if "nested_data" in df.attrs:
+            new_nested_data = {}
+            for column in df.columns:
+                if column in df.attrs["nested_data"]:
+                    new_nested_data[column] = df.attrs["nested_data"][column]
+            df.attrs["nested_data"] = new_nested_data
 
     def delete_selected_rows(self):
         selected_rows = sorted(set(index.row() for index in self.table_view.selectionModel().selectedRows()), reverse=True)

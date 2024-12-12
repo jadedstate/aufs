@@ -17,6 +17,19 @@ sys.path.insert(0, src_path)
 from src.aufs.user_tools.qtwidgets.widgets.cascading_panes_simple import CascadingPaneManager
 from src.aufs.user_tools.packaging.pandas_deep_data_editor import DeepEditor, NestedEditor
 
+"""
+
+**************
+
+This script needs to be refactored into a preferences, config, env setup utility.
+
+
+
+**************
+
+
+"""
+
 class UppercaseTemplateManager(QWidget):
     def __init__(self, root_directory, client=None, project=None, recipient=None, root_job_path=None, task=None, parent=None):
         super().__init__(parent)
@@ -117,40 +130,13 @@ class UppercaseTemplateManager(QWidget):
         self.load_editor_button = QPushButton("Load Nested Editor", self)
         self.load_editor_button.clicked.connect(self.load_editor_data)
         self.template_editing_top_buttons_layout.addWidget(self.load_editor_button)
-        # Add Save Progress button
-        self.save_progress_button = QPushButton("Save Progress", self)
-        self.save_progress_button.clicked.connect(self.save_template)  # Connect to save_template method
-        self.template_editing_top_buttons_layout.addWidget(self.save_progress_button)
-        # Add Save As button
-        self.save_as_button = QPushButton("Save as", self)
-        self.save_as_button.clicked.connect(self.save_template_as)  # Connect to save_template method
-        self.template_editing_top_buttons_layout.addWidget(self.save_as_button)
 
         self.template_editing_layout.addLayout(self.template_editing_top_buttons_layout)
 
         self.deep_editor_container = QVBoxLayout()
-        button_flags = {
-            'search_replace': True,
-            'add_row': True,
-            'delete_row': True,
-            'move_row_up': True,
-            'move_row_down': True,
-            'add_column': True,
-            'delete_column': False,
-            'move_column_left': False,
-            'move_column_right': False,
-            'sort_column': False,
-            'clear_selection': True,
-            'set_column_type': False,
-            'dtype_dropdown': False,
-            'reload': False,
-            'save': False,
-            'exit': False
-        }
         self.deep_editor = DeepEditor(
             nested_mode=True,  # Enable nested mode
             auto_fit_columns=True,
-            button_flags=button_flags,
             parent=self
         )
         self.deep_editor.setVisible(False)  # Initially hidden until loaded
@@ -164,7 +150,7 @@ class UppercaseTemplateManager(QWidget):
         #
 
         # Add a "Load Template" button to dynamically create the second set of panes
-        self.load_template_button = QPushButton("Load Templating Snippet Explorer", self)
+        self.load_template_button = QPushButton("Load Template", self)
         self.load_template_button.clicked.connect(self.add_template_panes)
         layout.addWidget(self.load_template_button)
 
@@ -174,60 +160,60 @@ class UppercaseTemplateManager(QWidget):
         layout.addWidget(self.template_panes_container)
 
         # Add buttons below the main splitter
-        # self.templating_pane_work_buttons_layout = QHBoxLayout()
-        # self.templating_pane_work_buttons_left_layout = QVBoxLayout()
-        # self.templating_pane_work_buttons_middle_layout = QVBoxLayout()
-        # self.templating_pane_work_buttons_right_layout = QVBoxLayout()
+        self.templating_pane_work_buttons_layout = QHBoxLayout()
+        self.templating_pane_work_buttons_left_layout = QVBoxLayout()
+        self.templating_pane_work_buttons_middle_layout = QVBoxLayout()
+        self.templating_pane_work_buttons_right_layout = QVBoxLayout()
 
-        # # Button: New Directory
-        # new_dir_button = QPushButton("New Directory", self)
-        # new_dir_button.clicked.connect(self.create_new_directory)
+        # Button: New Directory
+        new_dir_button = QPushButton("New Directory", self)
+        new_dir_button.clicked.connect(self.create_new_directory)
 
-        # # Button: New Template File
-        # new_template_button = QPushButton("New Template File", self)
-        # new_template_button.clicked.connect(self.create_new_template_file)
+        # Button: New Template File
+        new_template_button = QPushButton("New Template File", self)
+        new_template_button.clicked.connect(self.create_new_template_file)
 
-        # # Button: Copy, Paste, Rename, etc.
-        # copy_button = QPushButton("Copy File", self)
-        # copy_button.clicked.connect(self.copy_file)
+        # Button: Copy, Paste, Rename, etc.
+        copy_button = QPushButton("Copy File", self)
+        copy_button.clicked.connect(self.copy_file)
 
-        # paste_button = QPushButton("Paste File", self)
-        # paste_button.clicked.connect(self.paste_file)
+        paste_button = QPushButton("Paste File", self)
+        paste_button.clicked.connect(self.paste_file)
 
-        # rename_button = QPushButton("Rename Selected", self)
-        # rename_button.clicked.connect(self.rename_selected_item)
+        rename_button = QPushButton("Rename Selected", self)
+        rename_button.clicked.connect(self.rename_selected_item)
 
-        # refresh_button = QPushButton("Refresh List", self)
-        # refresh_button.clicked.connect(self.reload_current_pane)
+        refresh_button = QPushButton("Refresh List", self)
+        refresh_button.clicked.connect(self.reload_current_pane)
 
-        # save_button = QPushButton("Save Something", self)
-        # save_button.clicked.connect(self.save_template)
+        save_button = QPushButton("Save Something", self)
+        save_button.clicked.connect(self.save_template)
 
-        # browse_button = QPushButton("File Browser", self)
-        # browse_button.clicked.connect(self.file_browser)
+        browse_button = QPushButton("File Browser", self)
+        browse_button.clicked.connect(self.file_browser)
 
-        # # Arrange buttons
-        # # self.templating_pane_work_buttons_left_layout.addWidget(new_dir_button)
-        # # self.templating_pane_work_buttons_left_layout.addWidget(new_template_button)
-        # # self.templating_pane_work_buttons_left_layout.addWidget(save_button)
+        # Arrange buttons
+        self.templating_pane_work_buttons_left_layout.addWidget(new_dir_button)
+        self.templating_pane_work_buttons_left_layout.addWidget(new_template_button)
+        self.templating_pane_work_buttons_left_layout.addWidget(save_button)
 
-        # # self.templating_pane_work_buttons_middle_layout.addWidget(copy_button)
-        # # self.templating_pane_work_buttons_middle_layout.addWidget(rename_button)
-        # # self.templating_pane_work_buttons_middle_layout.addWidget(browse_button)
+        self.templating_pane_work_buttons_middle_layout.addWidget(copy_button)
+        self.templating_pane_work_buttons_middle_layout.addWidget(rename_button)
+        self.templating_pane_work_buttons_middle_layout.addWidget(browse_button)
 
-        # # self.templating_pane_work_buttons_right_layout.addWidget(paste_button)
-        # # self.templating_pane_work_buttons_right_layout.addWidget(refresh_button)
+        self.templating_pane_work_buttons_right_layout.addWidget(paste_button)
+        self.templating_pane_work_buttons_right_layout.addWidget(refresh_button)
 
-        # # self.templating_pane_work_buttons_left_layout.addStretch()
-        # # self.templating_pane_work_buttons_middle_layout.addStretch()
-        # # self.templating_pane_work_buttons_right_layout.addStretch()
+        self.templating_pane_work_buttons_left_layout.addStretch()
+        self.templating_pane_work_buttons_middle_layout.addStretch()
+        self.templating_pane_work_buttons_right_layout.addStretch()
 
-        # # self.templating_pane_work_buttons_layout.addLayout(self.templating_pane_work_buttons_left_layout)
-        # # self.templating_pane_work_buttons_layout.addLayout(self.templating_pane_work_buttons_middle_layout)
-        # # self.templating_pane_work_buttons_layout.addLayout(self.templating_pane_work_buttons_right_layout)
-        # self.templating_pane_work_buttons_layout.addStretch()
+        self.templating_pane_work_buttons_layout.addLayout(self.templating_pane_work_buttons_left_layout)
+        self.templating_pane_work_buttons_layout.addLayout(self.templating_pane_work_buttons_middle_layout)
+        self.templating_pane_work_buttons_layout.addLayout(self.templating_pane_work_buttons_right_layout)
+        self.templating_pane_work_buttons_layout.addStretch()
 
-        # layout.addLayout(self.templating_pane_work_buttons_layout)
+        layout.addLayout(self.templating_pane_work_buttons_layout)
 
         # Initialize the main pane
         self.first_pane_list_manager()
@@ -745,66 +731,8 @@ class UppercaseTemplateManager(QWidget):
             QMessageBox.information(self, "Selected Template", f"You selected: {selected_file}")
 
     def save_template(self):
-        """
-        Save the currently loaded template in DeepEditor to a file.
-        """
-        if not self.deep_editor.isVisible():
-            QMessageBox.warning(self, "No Data to Save", "No template data is currently loaded or visible.")
-            return
-
-        try:
-            # Get the current DataFrame from DeepEditor
-            df = self.deep_editor.model.get_dataframe()
-
-            # Retain only the required columns
-            columns_to_save = ['PROVISIONEDLINK', 'DOTEXTENSION']
-            if not all(col in df.columns for col in columns_to_save):
-                QMessageBox.critical(self, "Missing Columns", f"One or more required columns ({', '.join(columns_to_save)}) are missing.")
-                return
-
-            df = df[columns_to_save]
-
-            if df.empty:
-                QMessageBox.warning(self, "No Data", "The current template is empty and cannot be saved.")
-                return
-
-            # Save the DataFrame to the specified file path
-            df.to_csv(self.selected_path, index=False)
-            QMessageBox.information(self, "Success", f"Updated template: '{self.selected_path}'.")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to save the template: {e}")
-
-    def save_template_as(self):
-        """
-        Save the currently loaded template in DeepEditor to a file.
-        """
-        if not self.deep_editor.isVisible():
-            QMessageBox.warning(self, "No Data to Save", "No template data is currently loaded or visible.")
-            return
-
-        # Get the current DataFrame from DeepEditor
-        df = self.deep_editor.model.get_dataframe()
-
-        if df.empty:
-            QMessageBox.warning(self, "No Data", "The current template is empty and cannot be saved.")
-            return
-
-        # Open a file dialog for the user to specify the save location
-        dialog = QFileDialog(self)
-        dialog.setWindowTitle("Save Template")
-        dialog.setAcceptMode(QFileDialog.AcceptSave)
-        dialog.setNameFilter("CSV Files (*.csv);;All Files (*)")
-        dialog.setDefaultSuffix("csv")
-
-        if dialog.exec():
-            save_path = dialog.selectedFiles()[0]
-
-            try:
-                # Save the DataFrame to the specified file path
-                df.to_csv(save_path, index=False)
-                QMessageBox.information(self, "Success", f"Template saved to '{save_path}'.")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to save template: {e}")
+        """Placeholder function for saving templates."""
+        QMessageBox.information(self, "Save Template", "Save functionality is not implemented yet.")
 
     @staticmethod
     def main():

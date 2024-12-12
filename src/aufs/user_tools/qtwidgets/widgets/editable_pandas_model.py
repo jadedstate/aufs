@@ -666,17 +666,54 @@ class EditablePandasModel(QAbstractTableModel):
 
         return flags
 
-
 class EnhancedPandasModel(EditablePandasModel):
-    def __init__(self, dataframe, value_options=None, editable=True,
-                 auto_fit_columns=False, dragNdrop=False, ui_only=True, parent=None):
+    def __init__(self, dataframe, value_options=None, editable=True, transformer=None,
+                 auto_fit_columns=False, dragNdrop=False, ui_only=True, create_embedded=False, parent=None):
         super().__init__(dataframe, value_options, editable, auto_fit_columns, parent)
         self.dragNdrop = dragNdrop
         self.ui_only = ui_only
+        self.create_embedded = create_embedded  # New mode flag for embedded data
         self._column_order = list(range(len(self._dataframe.columns)))  # Initialize column order
         self._sort_states = {}
         self._original_index = self._dataframe.index.copy()  # Preserve the original row order
         self._original_dataframe = dataframe.copy()
+        self._dataframe = dataframe
+        self.transformer = transformer or NestedDataTransformer()  # Use the transformer
+
+    def data(self, index, role=Qt.DisplayRole):
+        """Retrieve data for display or editing, supporting embedded mode."""
+        if not index.isValid():
+            return None
+
+        if role in (Qt.DisplayRole, Qt.EditRole):
+            if self.create_embedded:  # Embedded mode logic
+                cell_value = self._dataframe.iloc[index.row(), index.column()]
+                return self.transformer.to_display_value(cell_value)  # Transform for display
+            else:  # Standard behavior
+                col = self._column_order[index.column()] if self.dragNdrop else index.column()
+                return str(self._dataframe.iloc[index.row(), col])
+
+        return super().data(index, role)  # Fallback for other roles
+
+    def setData(self, index, value, role=Qt.EditRole):
+        """Set data for editing, supporting embedded mode."""
+        if not index.isValid() or role != Qt.EditRole:
+            return False
+
+        if self.create_embedded:  # Embedded mode logic
+            # Retrieve the original nested value
+            original_value = self._dataframe.iloc[index.row(), index.column()]
+            # Transform the edited value back into the nested structure
+            updated_value = self.transformer.from_display_value(value, original_value)
+            # Update the DataFrame with the transformed value
+            self._dataframe.iloc[index.row(), index.column()] = updated_value
+        else:  # Standard behavior
+            row = index.row()
+            column = self._dataframe.columns[index.column()]
+            self._dataframe.iloc[row, index.column()] = value  # Standard update
+
+        self.dataChanged.emit(index, index, [Qt.EditRole])
+        return True
 
     def sort_column(self, column_index):
         """Sorts the column in a cycle: original -> ascending -> descending."""
@@ -726,14 +763,6 @@ class EnhancedPandasModel(EditablePandasModel):
         # print(self._dataframe)
         self._dataframe = self._dataframe.sort_index().reset_index(drop=True)
         self.layoutChanged.emit()  # Notify the view of changes
-
-    def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid():
-            return None
-        if role in (Qt.DisplayRole, Qt.EditRole):
-            col = self._column_order[index.column()] if self.dragNdrop else index.column()
-            return str(self._dataframe.iloc[index.row(), col])
-        return super().data(index, role)
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         if role == Qt.DisplayRole and orientation == Qt.Horizontal:
@@ -852,3 +881,49 @@ class SortableTableView(QTableView):
             print(f"Dropped at row: {index.row()}, column: {index.column()}")
         else:
             print("Drop position invalid.")
+
+class NestedDataTransformer:
+    def __init__(self, key_field='key', delimiter='/'):
+        """
+        Args:
+            key_field (str): The field in the nested data to display in the editor.
+            delimiter (str): Delimiter for reconstructing nested data from display strings.
+        """
+        self.key_field = key_field
+        self.delimiter = delimiter
+
+    def to_display_value(self, cell_value):
+        """
+        Transform a nested value into a display string.
+        Args:
+            cell_value (dict or list or str): The nested value.
+
+        Returns:
+            str: The transformed display string.
+        """
+        if isinstance(cell_value, dict) and self.key_field in cell_value:
+            return str(cell_value[self.key_field])
+        elif isinstance(cell_value, list):
+            return self.delimiter.join(map(str, cell_value))
+        elif isinstance(cell_value, str):
+            return cell_value  # Already a displayable string
+        return str(cell_value)  # Fallback for other types
+
+    def from_display_value(self, display_value, original_value):
+        """
+        Parse a display string back into a nested format.
+        Args:
+            display_value (str): The edited display value.
+            original_value (dict or list or str): The original nested value.
+
+        Returns:
+            dict or list or str: The reconstructed nested value.
+        """
+        if isinstance(original_value, dict):
+            # Update the key field in the original dictionary
+            original_value[self.key_field] = display_value
+            return original_value
+        elif isinstance(original_value, list):
+            # Split the string into list elements
+            return display_value.split(self.delimiter)
+        return display_value  # Assume plain strings are stored as-is

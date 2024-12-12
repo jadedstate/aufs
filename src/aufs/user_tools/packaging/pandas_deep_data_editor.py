@@ -19,7 +19,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 src_path = os.path.join(current_dir, '..', '..', '..')  # Adjust to point to the `src` folder
 sys.path.insert(0, src_path)
 
-from src.aufs.user_tools.qtwidgets.widgets.editable_pandas_model import EditablePandasModel, EnhancedPandasModel, SortableTableView
+from src.aufs.user_tools.qtwidgets.widgets.editable_pandas_model import NestedDataTransformer, EnhancedPandasModel, SortableTableView
 
 class DraggableTextInput(QLineEdit):
     def __init__(self, parent=None):
@@ -78,7 +78,7 @@ class CustomDelegate(QStyledItemDelegate):
 
 class DeepEditor(QWidget):
     def __init__(self, file_path=None, dataframe_input=None, value_options=None, file_type='parquet', 
-                 nested_mode=False, preload=False, parent=None, button_flags=None, auto_fit_columns=True):
+                 nested_mode=False, preload=False, key_field='key', delimiter='/', parent=None, button_flags=None, auto_fit_columns=True):
         super().__init__(parent)
         self.preload = preload
         self.current_tree_dialog = None
@@ -133,13 +133,15 @@ class DeepEditor(QWidget):
         # self.temp_drag_input.setPlaceholderText("Drop here to test drag-and-drop...")
         # self.main_layout.addWidget(self.temp_drag_input)
 
-
+        # Initialize the transformer with desired configuration
+        self.transformer = NestedDataTransformer(key_field=key_field, delimiter=delimiter)
         # Updated model to EnhancedPandasModel
         self.model = EnhancedPandasModel(
             self.dataframe_input if self.dataframe_input is not None else pd.DataFrame(),
             value_options=value_options,
             editable=True,
             dragNdrop=True,
+            transformer=self.transformer,
             auto_fit_columns=self.auto_fit_columns
         )
         self.model.dataChanged.connect(self.track_changes)
@@ -464,8 +466,10 @@ class DeepEditor(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open Search and Replace: {str(e)}")
 
-    def load_from_dataframe(self, dataframe):
+    def load_from_dataframe(self, dataframe, create_embedded=False):
         """Load directly from an in-memory DataFrame."""
+        self.create_embedded = create_embedded
+        
         self.dataframe = dataframe
         self.model.update_dataframe(dataframe)
 

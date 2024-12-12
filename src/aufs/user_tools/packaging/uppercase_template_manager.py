@@ -418,7 +418,7 @@ class UppercaseTemplateManager(QWidget):
         """Build and display the first pane with available template options."""
         # Prepare directory paths
         directories = [
-            {"Item": "Root", "Path": os.path.join(self.root_directory)},
+            # {"Item": "Root", "Path": os.path.join(self.root_directory)},
             {"Item": "Global Templates", "Path": os.path.join(self.root_directory, "packaging", "global")},
             {"Item": "Vendor Templates", "Path": os.path.join(self.root_directory, "packaging", "vendor", (self.recipient or ""))},
             {"Item": "Client Templates", "Path": os.path.join(self.root_directory, "packaging", "client", (self.client or ""))},
@@ -580,7 +580,7 @@ class UppercaseTemplateManager(QWidget):
         else:
             QMessageBox.warning(self, "Unhandled Selection", f"Item: {self.selected_item}\nPath: {self.selected_path}")
 
-    def load_editor_data(self):
+    def load_editor_data(self, create_embedded=True):
         """Read the file at self.templating_path, prepare the data, and load it into DeepEditor."""
         if not self.selected_path or not os.path.isfile(self.selected_path):
             QMessageBox.warning(self, "No File Selected", "Please select a valid file to load.")
@@ -588,11 +588,13 @@ class UppercaseTemplateManager(QWidget):
 
         try:
             df = self.load_template_file_to_df(self.selected_path)
-            df = self.template_file_deep_df(df)
-            df = self.create_nested_components(df)
+            df = self.template_file_deep_df(df, create_embedded=create_embedded)
+            
+            if not create_embedded:
+                df = self.create_nested_components(df)
 
             # Load the DataFrame into the editor
-            self.deep_editor.load_from_dataframe(df)
+            self.deep_editor.load_from_dataframe(df, create_embedded=create_embedded)
             self.deep_editor.setVisible(True)  # Make the editor visible
             # QMessageBox.information(self, "File Loaded", f"Loaded data from {self.selected_path}")
 
@@ -633,7 +635,7 @@ class UppercaseTemplateManager(QWidget):
 
         return df
 
-    def template_file_deep_df(self, df):
+    def template_file_deep_df(self, df, create_embedded):
         """
         Transform the input DataFrame by splitting `PROVISIONEDLINK` into segments.
 
@@ -652,7 +654,8 @@ class UppercaseTemplateManager(QWidget):
         working_df[split_columns] = split_data
 
         # Track new columns for later updates
-        working_df.attrs["split_columns"] = split_columns
+        if not create_embedded:
+            working_df.attrs["split_columns"] = split_columns
 
         return working_df
 

@@ -12,6 +12,7 @@ src_path = os.path.join(current_dir, '..', '..', '..', '..')  # Adjust to point 
 sys.path.insert(0, src_path)
 
 from src.aufs.user_tools.deep_editor import DeepEditor
+from contextlib import contextmanager
 
 class DataProvisioningWidget(QWidget):
     def __init__(self, input_df, root_package_path, parent=None):
@@ -127,11 +128,7 @@ class DataProvisioningWidget(QWidget):
 
     def transform_paths(self, df, source_col="FILE", destination_col="PROVISIONEDLINK"):
         """
-        Transform paths in the given DataFrame.
-        :param df: Input DataFrame to transform.
-        :param source_col: Column name for source paths (default is 'FILE').
-        :param destination_col: Column name for destination paths (default is 'PROVISIONEDLINK').
-        :return: Transformed DataFrame with updated destination paths and limited to specified columns.
+        Transform paths in the given DataFrame relative to self.root_package_path.
         """
         if df is None or df.empty:
             raise ValueError("Input DataFrame is empty or not initialized.")
@@ -141,17 +138,16 @@ class DataProvisioningWidget(QWidget):
         for _, row in df.iterrows():
             source_abs = row[source_col]
 
-            # Transform the destination path to a relative path
+            # Transform the destination path to be relative to self.root_package_path
             destination_abs = os.path.join(self.root_package_path, row[destination_col])
-            destination_rel = os.path.relpath(destination_abs, os.path.dirname(source_abs))
+            destination_rel = os.path.relpath(destination_abs, self.root_package_path)
 
             # Add transformed values to a new row
             transformed_rows.append({
                 source_col: source_abs,
-                destination_col: destination_rel,
+                destination_col: destination_rel,  # Relative to root_package_path
             })
 
-        # Return a DataFrame with only the transformed rows and the specified columns
         return pd.DataFrame(transformed_rows, columns=[source_col, destination_col])
 
     def process_data(self):
@@ -167,17 +163,31 @@ class DataProvisioningWidget(QWidget):
 
     def create_relative_symlink(self, source, destination):
         """
-        Creates a symlink from the absolute source to the finalized relative destination.
+        Create a symlink from the absolute source to the relative destination, anchored to self.root_package_path.
         """
         if not os.path.exists(source):
             print(f"Warning: Source does not exist: {source}")
             return
 
-        destination_dir = os.path.dirname(destination)
-        os.makedirs(destination_dir, exist_ok=True)
+        # Switch to self.root_package_path as the working directory
+        with self.change_working_directory(self.root_package_path):
+            destination_dir = os.path.dirname(destination)
+            os.makedirs(destination_dir, exist_ok=True)  # Ensure the destination directory exists
 
+            try:
+                os.symlink(source, destination)
+                print(f"Created symlink: {source} -> {destination}")
+            except OSError as e:
+                print(f"Failed to create symlink: {e}")
+
+    @contextmanager
+    def change_working_directory(self, directory):
+        """
+        Context manager to temporarily change the working directory.
+        """
+        original_directory = os.getcwd()
         try:
-            os.symlink(source, destination)
-            print(f"Created symlink: {source} -> {destination}")
-        except OSError as e:
-            print(f"Failed to create symlink: {e}")
+            os.chdir(directory)
+            yield
+        finally:
+            os.chdir(original_directory)

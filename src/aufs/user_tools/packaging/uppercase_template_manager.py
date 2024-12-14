@@ -418,7 +418,7 @@ class UppercaseTemplateManager(QWidget):
         """Build and display the first pane with available template options."""
         # Prepare directory paths
         directories = [
-            # {"Item": "Root", "Path": os.path.join(self.root_directory)},
+            {"Item": "Root", "Path": os.path.join(self.root_directory)},
             {"Item": "Global Templates", "Path": os.path.join(self.root_directory, "packaging", "global")},
             {"Item": "Vendor Templates", "Path": os.path.join(self.root_directory, "packaging", "vendor", (self.recipient or ""))},
             {"Item": "Client Templates", "Path": os.path.join(self.root_directory, "packaging", "client", (self.client or ""))},
@@ -580,7 +580,7 @@ class UppercaseTemplateManager(QWidget):
         else:
             QMessageBox.warning(self, "Unhandled Selection", f"Item: {self.selected_item}\nPath: {self.selected_path}")
 
-    def load_editor_data(self, create_embedded=True):
+    def load_editor_data(self, create_embedded=False):
         """Read the file at self.templating_path, prepare the data, and load it into DeepEditor."""
         if not self.selected_path or not os.path.isfile(self.selected_path):
             QMessageBox.warning(self, "No File Selected", "Please select a valid file to load.")

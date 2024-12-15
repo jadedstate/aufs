@@ -144,6 +144,7 @@ class DeepEditor(QWidget):
             transformer=self.transformer,
             auto_fit_columns=self.auto_fit_columns
         )
+        self.model.parent_editor = self
         self.model.dataChanged.connect(self.track_changes)
         self.model.dataChanged.connect(self.handle_data_change)
 
@@ -356,25 +357,48 @@ class DeepEditor(QWidget):
         # Emit layoutChanged to refresh the view
         self.model.layoutChanged.emit()
 
-    def update_provisioned_links(self):
+    def update_provisioned_links(self, delete=False):
         """
-        Recalculates the PROVISIONEDLINK column for all rows.
-        Runs nested component creation before updating links.
+        Recalculates or cleans up the PROVISIONEDLINK column.
+        When `delete` is True, ensures no references to deleted columns remain.
         """
-        self.create_nested_components()  # Ensure nested components are updated
-
+        print("BOOO 1")
         df = self.model.get_dataframe()
 
-        if "PROVISIONEDLINK" not in df.columns:
-            df["PROVISIONEDLINK"] = None
+        if delete:
+            # If deleting, clean up `split_columns` and `nested_data` without creating new columns
+            if "split_columns" in df.attrs:
+                df.attrs["split_columns"] = [col for col in df.attrs["split_columns"] if col in df.columns]
 
-        for row in range(len(df)):
-            provisioned_columns = df.columns[2:]
-            joined_value = "/".join(
-                str(df.at[row, col]) for col in provisioned_columns if pd.notnull(df.at[row, col])
-            )
-            df.at[row, "PROVISIONEDLINK"] = joined_value
+            if "nested_data" in df.attrs:
+                df.attrs["nested_data"] = {
+                    col: nested for col, nested in df.attrs["nested_data"].items() if col in df.columns
+                }
 
+            # Ensure `PROVISIONEDLINK` is consistent with the remaining columns
+            if "PROVISIONEDLINK" in df.columns:
+                for row in range(len(df)):
+                    provisioned_columns = df.columns[2:]  # Adjust as needed for your schema
+                    joined_value = "/".join(
+                        str(df.at[row, col]) for col in provisioned_columns if pd.notnull(df.at[row, col])
+                    )
+                    df.at[row, "PROVISIONEDLINK"] = joined_value
+
+        else:
+            # Regular recalculation logic (creation mode)
+            self.create_nested_components()
+
+            if "PROVISIONEDLINK" not in df.columns:
+                df["PROVISIONEDLINK"] = None
+
+            for row in range(len(df)):
+                provisioned_columns = df.columns[2:]  # Adjust as needed
+                joined_value = "/".join(
+                    str(df.at[row, col]) for col in provisioned_columns if pd.notnull(df.at[row, col])
+                )
+                df.at[row, "PROVISIONEDLINK"] = joined_value
+
+        # Notify the model of the changes
         self.model.layoutChanged.emit()
 
     def update_provisioned_link_for_row(self, row):
@@ -481,103 +505,138 @@ class DeepEditor(QWidget):
         """Track if any changes were made to the DataFrame."""
         self.changes_made = True
 
-    def closeEvent(self, event):
-        """Prompt the user to save changes before closing."""
-        if self.changes_made:
-            reply = QMessageBox.question(self, 'Save Changes?',
-                                         "You have unsaved changes. Do you want to save before closing?",
-                                         QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
-                                         QMessageBox.Cancel)
-            if reply == QMessageBox.Yes:
-                self.save_file()
-                event.accept()
-            elif reply == QMessageBox.No:
-                event.accept()  # Close without saving
-            else:
-                event.ignore()  # Cancel closing
-        else:
-            event.accept()
-
-    def load_file(self):
-        """Load the file based on its type ('parquet' or 'csv')."""
-        if self.file_path:
-            if self.file_type == 'parquet':
-                self.load_parquet(preload=self.preload)
-            elif self.file_type == 'csv':
-                self.load_csv(preload=self.preload)
-
-    def reload_file(self):
-        """Reload the file, discarding any unsaved changes."""
-        if self.file_path:
-            reply = QMessageBox.question(self, 'Confirm Reload', 
-                                         "Are you sure you want to reload the file? All unsaved changes will be lost.", 
-                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if reply == QMessageBox.Yes:
-                self.load_file()
-
-    def load_parquet(self, preload=False):
-        """Load the Parquet file into a Pandas DataFrame."""
-        try:
-            if os.path.exists(self.file_path):
-                dataframe = pd.read_parquet(self.file_path)
-
-                if preload:
-                    # Treat as user-passed DataFrame
-                    self.dataframe_input = dataframe
-                    self.load_from_dataframe(dataframe)  # Reuse existing method for direct DataFrame loading
-                else:
-                    # Original behavior
-                    self.dataframe = dataframe
-                    self.model.update_dataframe(dataframe)
-                    self.table_view.setModel(self.model)
-                    if self.auto_fit_columns:
-                        self.table_view.resizeColumnsToContents()
-            else:
-                QMessageBox.warning(self, "File Not Found", f"{self.file_path} does not exist.")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load Parquet file: {str(e)}")
-
-    def load_csv(self, dtype_mapping=None, preload=False):
-        """Load the CSV file into a Pandas DataFrame with specified column data types."""
-        try:
-            if os.path.exists(self.file_path):
-                if dtype_mapping is None:
-                    dtype_mapping = {'PADDING': str, 'FIRSTFRAME': str, 'LASTFRAME': str}
-                dataframe = pd.read_csv(self.file_path, dtype=dtype_mapping)
-                print("Read: ", self.file_path)
-                
-                if preload:
-                    # Treat as user-passed DataFrame
-                    self.dataframe_input = dataframe
-                    self.load_from_dataframe(dataframe)  # Reuse existing method for direct DataFrame loading
-                else:
-                    # Original behavior
-                    self.dataframe = dataframe
-                    self.model.update_dataframe(dataframe)
-                    self.table_view.setModel(self.model)
-                    if self.auto_fit_columns:
-                        self.table_view.resizeColumnsToContents()
-            else:
-                QMessageBox.warning(self, "File Not Found", f"{self.file_path} does not exist.")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load CSV file: {str(e)}")
-
-    def open_context_menu(self, position):
-        """Handle right-click event and directly show the nested structure."""
-        index = self.table_view.indexAt(position)
+    def move_row_up(self):
+        index = self.table_view.currentIndex()
         if index.isValid():
-            self.current_row, self.current_col = index.row(), index.column()
+            new_row_index = self.model.move_row(index.row(), -1)
+            if new_row_index is not None:
+                # Update the selection to the new row
+                self.table_view.selectRow(new_row_index)
 
-            # Generate id_df for the right-clicked cell only
-            self.model.generate_id_df(self.current_row, self.current_col)
+    def move_row_down(self):
+        index = self.table_view.currentIndex()
+        if index.isValid():
+            new_row_index = self.model.move_row(index.row(), 1)
+            if new_row_index is not None:
+                # Update the selection to the new row
+                self.table_view.selectRow(new_row_index)
 
-            # Display the tree view based on the id_df
-            self.show_tree_view()
+    def move_column_left(self):
+        index = self.table_view.currentIndex()
+        if index.isValid():
+            # Move the column and get the new index
+            new_col_index = self.model.move_column(index.column(), -1)
+            if new_col_index is not None:
+                # Update the selection to the new column
+                self.table_view.setCurrentIndex(self.table_view.model().index(index.row(), new_col_index))
+                # Update provisioned links after moving the column
+                self.update_provisioned_links()
+                # Keep the column selected
+                self.table_view.selectColumn(new_col_index)
 
-    def enable_nested_mode(self):
-        """Enable additional nested mode features, like the tree view and nested editor."""
-        self.table_view.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table_view.customContextMenuRequested.connect(self.show_context_menu)
+    def move_column_right(self):
+        index = self.table_view.currentIndex()
+        if index.isValid():
+            # Move the column and get the new index
+            new_col_index = self.model.move_column(index.column(), 1)
+            if new_col_index is not None:
+                # Update the selection to the new column
+                self.table_view.setCurrentIndex(self.table_view.model().index(index.row(), new_col_index))
+                # Update provisioned links after moving the column
+                self.update_provisioned_links()
+                # Keep the column selected
+                self.table_view.selectColumn(new_col_index)
+
+    def add_row(self):
+        self.model.add_row()
+
+    def add_column(self):
+        """Add a new column to the DataFrame, with an optional randomly generated column name."""
+        # Generate a random column name
+        random_column_name = f"Column_{''.join(random.choices(string.ascii_uppercase + string.digits, k=5))}"
+
+        # Prompt the user for a column name, defaulting to the random name
+        column_name, ok = QInputDialog.getText(
+            self,
+            "Add Column",
+            "Column name (leave blank to use a randomly generated name):",
+            text=random_column_name
+        )
+
+        if ok:
+            column_name = column_name.strip() or random_column_name  # Fallback to random name if input is empty
+            dtype, ok_type = QInputDialog.getItem(
+                self,
+                "Select Data Type",
+                "Choose column data type:",
+                self.model.get_valid_dtypes(),
+                editable=False
+            )
+            if ok_type and dtype:
+                # Add the column via the model
+                self.model.add_column(column_name=column_name, dtype=dtype)
+
+                # Initialize nested data for the new column
+                df = self.model.get_dataframe()
+                if "nested_data" not in df.attrs:
+                    df.attrs["nested_data"] = {}
+                df.attrs["nested_data"][column_name] = [[] for _ in range(len(df))]
+
+                # Recalculate PROVISIONEDLINK to account for the new column
+                self.update_provisioned_links()
+
+                # Synchronize nested data structures
+                self.sync_nested_data_with_columns()
+
+                # Notify the model that the structure has changed
+                self.model.layoutChanged.emit()
+
+    def delete_selected_columns(self):
+        selected_columns = sorted(set(index.column() for index in self.table_view.selectionModel().selectedColumns()), reverse=True)
+        if selected_columns:
+            # Get the current DataFrame
+            df = self.model.get_dataframe()
+
+            # Remove columns from `nested_data` if they exist
+            if "nested_data" in df.attrs:
+                for col in selected_columns:
+                    column_name = df.columns[col]
+                    if column_name in df.attrs["nested_data"]:
+                        del df.attrs["nested_data"][column_name]
+
+            # Perform the actual column deletion
+            self.model.delete_columns(selected_columns)
+
+            # Use the delete flag to clean up attributes
+            self.update_provisioned_links(delete=True)
+
+            # Track changes and notify the model
+            self.track_changes()
+
+    def sync_nested_data_with_columns(self):
+        """Synchronize the nested data structure with the current column order."""
+        df = self.model.get_dataframe()
+        if "nested_data" in df.attrs:
+            new_nested_data = {}
+            for column in df.columns:
+                if column in df.attrs["nested_data"]:
+                    new_nested_data[column] = df.attrs["nested_data"][column]
+            df.attrs["nested_data"] = new_nested_data
+
+    def delete_selected_rows(self):
+        selected_rows = sorted(set(index.row() for index in self.table_view.selectionModel().selectedRows()), reverse=True)
+        if selected_rows:
+            self.model.delete_rows(selected_rows)
+            self.track_changes()
+
+    def sort_column(self):
+        index = self.table_view.currentIndex()
+        if index.isValid():
+            self.model.sort_column(index.column())
+
+    def clear_selected_data(self):
+        selection = self.table_view.selectionModel().selectedIndexes()
+        self.model.clear_selection(selection)
 
     def preview_nested_data(self, row, column):
         """
@@ -689,6 +748,104 @@ class DeepEditor(QWidget):
         menu.addAction(nested_edit_action)
         menu.exec(self.table_view.viewport().mapToGlobal(position))
 
+    def closeEvent(self, event):
+        """Prompt the user to save changes before closing."""
+        if self.changes_made:
+            reply = QMessageBox.question(self, 'Save Changes?',
+                                         "You have unsaved changes. Do you want to save before closing?",
+                                         QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                                         QMessageBox.Cancel)
+            if reply == QMessageBox.Yes:
+                self.save_file()
+                event.accept()
+            elif reply == QMessageBox.No:
+                event.accept()  # Close without saving
+            else:
+                event.ignore()  # Cancel closing
+        else:
+            event.accept()
+
+    def load_file(self):
+        """Load the file based on its type ('parquet' or 'csv')."""
+        if self.file_path:
+            if self.file_type == 'parquet':
+                self.load_parquet(preload=self.preload)
+            elif self.file_type == 'csv':
+                self.load_csv(preload=self.preload)
+
+    def reload_file(self):
+        """Reload the file, discarding any unsaved changes."""
+        if self.file_path:
+            reply = QMessageBox.question(self, 'Confirm Reload', 
+                                         "Are you sure you want to reload the file? All unsaved changes will be lost.", 
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                self.load_file()
+
+    def load_parquet(self, preload=False):
+        """Load the Parquet file into a Pandas DataFrame."""
+        try:
+            if os.path.exists(self.file_path):
+                dataframe = pd.read_parquet(self.file_path)
+
+                if preload:
+                    # Treat as user-passed DataFrame
+                    self.dataframe_input = dataframe
+                    self.load_from_dataframe(dataframe)  # Reuse existing method for direct DataFrame loading
+                else:
+                    # Original behavior
+                    self.dataframe = dataframe
+                    self.model.update_dataframe(dataframe)
+                    self.table_view.setModel(self.model)
+                    if self.auto_fit_columns:
+                        self.table_view.resizeColumnsToContents()
+            else:
+                QMessageBox.warning(self, "File Not Found", f"{self.file_path} does not exist.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load Parquet file: {str(e)}")
+
+    def load_csv(self, dtype_mapping=None, preload=False):
+        """Load the CSV file into a Pandas DataFrame with specified column data types."""
+        try:
+            if os.path.exists(self.file_path):
+                if dtype_mapping is None:
+                    dtype_mapping = {'PADDING': str, 'FIRSTFRAME': str, 'LASTFRAME': str}
+                dataframe = pd.read_csv(self.file_path, dtype=dtype_mapping)
+                print("Read: ", self.file_path)
+                
+                if preload:
+                    # Treat as user-passed DataFrame
+                    self.dataframe_input = dataframe
+                    self.load_from_dataframe(dataframe)  # Reuse existing method for direct DataFrame loading
+                else:
+                    # Original behavior
+                    self.dataframe = dataframe
+                    self.model.update_dataframe(dataframe)
+                    self.table_view.setModel(self.model)
+                    if self.auto_fit_columns:
+                        self.table_view.resizeColumnsToContents()
+            else:
+                QMessageBox.warning(self, "File Not Found", f"{self.file_path} does not exist.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load CSV file: {str(e)}")
+
+    def open_context_menu(self, position):
+        """Handle right-click event and directly show the nested structure."""
+        index = self.table_view.indexAt(position)
+        if index.isValid():
+            self.current_row, self.current_col = index.row(), index.column()
+
+            # Generate id_df for the right-clicked cell only
+            self.model.generate_id_df(self.current_row, self.current_col)
+
+            # Display the tree view based on the id_df
+            self.show_tree_view()
+
+    def enable_nested_mode(self):
+        """Enable additional nested mode features, like the tree view and nested editor."""
+        self.table_view.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table_view.customContextMenuRequested.connect(self.show_context_menu)
+
     def save_file(self, partition_cols=None):
         """Save the DataFrame to a file based on file type."""
         if self.file_path:
@@ -733,113 +890,6 @@ class DeepEditor(QWidget):
         if reply == QMessageBox.Yes:
             self.load_csv()
             self.model.update_dataframe(self.dataframe)
-
-    def move_row_up(self):
-        index = self.table_view.currentIndex()
-        if index.isValid():
-            new_row_index = self.model.move_row(index.row(), -1)
-            if new_row_index is not None:
-                # Update the selection to the new row
-                self.table_view.selectRow(new_row_index)
-
-    def move_row_down(self):
-        index = self.table_view.currentIndex()
-        if index.isValid():
-            new_row_index = self.model.move_row(index.row(), 1)
-            if new_row_index is not None:
-                # Update the selection to the new row
-                self.table_view.selectRow(new_row_index)
-
-    def move_column_left(self):
-        index = self.table_view.currentIndex()
-        if index.isValid():
-            new_col_index = self.model.move_column(index.column(), -1)
-            if new_col_index is not None:
-                # Update the selection to the new column
-                self.table_view.setCurrentIndex(self.table_view.model().index(index.row(), new_col_index))
-
-    def move_column_right(self):
-        index = self.table_view.currentIndex()
-        if index.isValid():
-            new_col_index = self.model.move_column(index.column(), 1)
-            if new_col_index is not None:
-                # Update the selection to the new column
-                self.table_view.setCurrentIndex(self.table_view.model().index(index.row(), new_col_index))
-
-    def add_row(self):
-        self.model.add_row()
-
-    def add_column(self):
-        """Add a new column to the DataFrame, with an optional randomly generated column name."""
-        # Generate a random column name
-        random_column_name = f"Column_{''.join(random.choices(string.ascii_uppercase + string.digits, k=5))}"
-
-        # Prompt the user for a column name, defaulting to the random name
-        column_name, ok = QInputDialog.getText(
-            self,
-            "Add Column",
-            "Column name (leave blank to use a randomly generated name):",
-            text=random_column_name
-        )
-
-        if ok:
-            column_name = column_name.strip() or random_column_name  # Fallback to random name if input is empty
-            dtype, ok_type = QInputDialog.getItem(
-                self,
-                "Select Data Type",
-                "Choose column data type:",
-                self.model.get_valid_dtypes(),
-                editable=False
-            )
-            if ok_type and dtype:
-                # Add the column via the model
-                self.model.add_column(column_name=column_name, dtype=dtype)
-
-                # Initialize nested data for the new column
-                df = self.model.get_dataframe()
-                if "nested_data" not in df.attrs:
-                    df.attrs["nested_data"] = {}
-                df.attrs["nested_data"][column_name] = [[] for _ in range(len(df))]
-
-                # Recalculate PROVISIONEDLINK to account for the new column
-                self.update_provisioned_links()
-
-                # Synchronize nested data structures
-                self.sync_nested_data_with_columns()
-
-                # Notify the model that the structure has changed
-                self.model.layoutChanged.emit()
-
-    def sync_nested_data_with_columns(self):
-        """Synchronize the nested data structure with the current column order."""
-        df = self.model.get_dataframe()
-        if "nested_data" in df.attrs:
-            new_nested_data = {}
-            for column in df.columns:
-                if column in df.attrs["nested_data"]:
-                    new_nested_data[column] = df.attrs["nested_data"][column]
-            df.attrs["nested_data"] = new_nested_data
-
-    def delete_selected_rows(self):
-        selected_rows = sorted(set(index.row() for index in self.table_view.selectionModel().selectedRows()), reverse=True)
-        if selected_rows:
-            self.model.delete_rows(selected_rows)
-            self.track_changes()
-
-    def delete_selected_columns(self):
-        selected_columns = sorted(set(index.column() for index in self.table_view.selectionModel().selectedColumns()), reverse=True)
-        if selected_columns:
-            self.model.delete_columns(selected_columns)
-            self.track_changes()
-
-    def sort_column(self):
-        index = self.table_view.currentIndex()
-        if index.isValid():
-            self.model.sort_column(index.column())
-
-    def clear_selected_data(self):
-        selection = self.table_view.selectionModel().selectedIndexes()
-        self.model.clear_selection(selection)
 
     def set_column_type(self):
         """Sets the column's data type based on the dropdown selection."""

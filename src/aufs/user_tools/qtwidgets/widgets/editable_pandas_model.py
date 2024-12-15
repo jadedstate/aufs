@@ -99,6 +99,7 @@ class EditablePandasModel(QAbstractTableModel):
             return
 
         column_widths = self.get_column_widths()
+        print("BOOOzzzz")
         for column, width in column_widths.items():
             print(f"Setting column {column} width to {width}.")
             view.setColumnWidth(column, width)
@@ -528,6 +529,7 @@ class EditablePandasModel(QAbstractTableModel):
     def move_column(self, column_index, direction):
         """Moves the column at column_index left or right. Direction should be -1 (left) or 1 (right).
         Returns the new column index of the moved column."""
+        print("BOOO from move_column")
 
         self.layoutAboutToBeChanged.emit()
 
@@ -666,6 +668,32 @@ class EditablePandasModel(QAbstractTableModel):
 
         return flags
 
+    def move_dragged_column(self, old_index, new_index):
+        """
+        Move a column from `old_index` to `new_index`, updating:
+        - DataFrame column order.
+        - Column widths.
+        """
+        if old_index == new_index:
+            return
+
+        # Update DataFrame column order
+        columns = self._dataframe.columns.tolist()
+        column = columns.pop(old_index)
+        columns.insert(new_index, column)
+        self._dataframe = self._dataframe[columns]
+
+        # Update column widths
+        if self.auto_fit_columns and self.column_widths:
+            widths = [self.column_widths.get(i, 100) for i in range(len(columns))]
+            width = widths.pop(old_index)
+            widths.insert(new_index, width)
+            self.column_widths = {i: widths[i] for i in range(len(widths))}
+
+        # Emit layout and header updates
+        self.layoutChanged.emit()
+        self.headerDataChanged.emit(Qt.Horizontal, min(old_index, new_index), max(old_index, new_index))
+
 class EnhancedPandasModel(EditablePandasModel):
     def __init__(self, dataframe, value_options=None, editable=True, transformer=None,
                  auto_fit_columns=False, dragNdrop=False, ui_only=True, create_embedded=False, parent=None):
@@ -800,6 +828,7 @@ class EnhancedPandasModel(EditablePandasModel):
 
     def moveColumn(self, source_col, target_col):
         """Reorder columns based on drag-and-drop."""
+        print("BOOO from moveColumn 1")
         self.beginMoveColumns(QModelIndex(), source_col, source_col, QModelIndex(), target_col)
 
         # Update column order
@@ -812,6 +841,23 @@ class EnhancedPandasModel(EditablePandasModel):
             self._dataframe = self._dataframe[reordered_columns]
 
         self.endMoveColumns()
+        print("BOOO from moveColumn 2")
+        self.layoutChanged.emit()
+
+    def reorder_columns(self, old_index, new_index):
+        """Reorder columns in the DataFrame based on header drag-and-drop."""
+        if old_index == new_index:
+            return  # No movement occurred
+
+        # Reorder columns in the DataFrame
+        columns = self._dataframe.columns.tolist()
+        column = columns.pop(old_index)
+        columns.insert(new_index, column)  # Move column to the new position
+
+        self._dataframe = self._dataframe[columns]  # Update the DataFrame column order
+        print(f"Reordered DataFrame columns: {columns}")  # Debug output
+
+        # Notify views of the layout change
         self.layoutChanged.emit()
 
 class SortableTableView(QTableView):
@@ -828,17 +874,71 @@ class SortableTableView(QTableView):
         self.setDragDropMode(QAbstractItemView.InternalMove)
 
         # Configure header for column drag-and-drop
+        self.header_sync_in_progress = False
         header = self.horizontalHeader()
         header.setSectionsMovable(True)
         header.setDragEnabled(True)
         header.setAcceptDrops(True)
 
-        # Re-enable header clicks for selection
-        header.setSectionsClickable(True)  # Restore ability to click and select columns
+        # Connect the sectionMoved signal to handle column reordering
+        header.sectionMoved.connect(self.on_section_moved)
 
-        # Set header context menu policy
-        header.setContextMenuPolicy(Qt.CustomContextMenu)
-        header.customContextMenuRequested.connect(self.show_header_context_menu)
+        # Re-enable header clicks for selection
+        header.setSectionsClickable(True)
+
+    def on_section_moved(self, logical_index, old_visual_index, new_visual_index):
+        """
+        Handle the event where a column header is moved, ensuring:
+        - DataFrame columns are reordered.
+        - Column widths are synced with the new order.
+        - Dependent fields are updated.
+        - Visual order is consistent.
+        """
+        if self.header_sync_in_progress:
+            return  # Avoid recursion
+
+        if old_visual_index == new_visual_index:
+            return  # No movement occurred
+
+        print(f"Column moved: logical_index={logical_index}, "
+            f"from {old_visual_index} to {new_visual_index}")
+
+        # Prevent recursion by setting the guard
+        self.header_sync_in_progress = True
+        try:
+            model = self.model()
+            if not model:
+                return  # No model to operate on
+
+            # Update the column order and widths in the model
+            model.move_dragged_column(old_visual_index, new_visual_index)
+
+            # Rebuild the visual column order (if necessary)
+            self.rebuild_visual_order()
+
+            # Notify parent editor for dependent updates
+            parent = self.parent()
+            if parent and hasattr(parent, "update_provisioned_links"):
+                parent.update_provisioned_links()
+
+        finally:
+            # Release the guard
+            self.header_sync_in_progress = False
+
+    def rebuild_visual_order(self):
+        """
+        Rebuilds the header visual order to match the DataFrame column order.
+        Ensures visual and logical consistency.
+        """
+        model = self.model()
+        if not model:
+            return
+
+        header = self.horizontalHeader()
+        current_order = model._dataframe.columns.tolist()
+        for logical_index, column_name in enumerate(current_order):
+            target_index = model._dataframe.columns.get_loc(column_name)
+            header.moveSection(header.visualIndex(logical_index), target_index)
 
     def show_context_menu(self, position):
         """Show context menu for table cells."""
@@ -881,6 +981,16 @@ class SortableTableView(QTableView):
             print(f"Dropped at row: {index.row()}, column: {index.column()}")
         else:
             print("Drop position invalid.")
+
+    def adjust_column_widths(self):
+        """Retrieve column widths from the model and apply them to the view."""
+        model = self.model()
+        if not model or not hasattr(model, "get_column_widths"):
+            return  # Model doesn't support width recalculation
+
+        column_widths = model.get_column_widths()  # Delegate to the model
+        for column_index, width in column_widths.items():
+            self.setColumnWidth(column_index, width)  # Apply the widths
 
 class NestedDataTransformer:
     def __init__(self, key_field='key', delimiter='/'):

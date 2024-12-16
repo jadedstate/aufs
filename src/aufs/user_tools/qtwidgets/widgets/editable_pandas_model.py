@@ -3,7 +3,7 @@
 import pandas as pd
 import json
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QMimeData
-from PySide6.QtWidgets import QMessageBox, QComboBox, QTableView, QMenu, QAbstractItemView, QInputDialog
+from PySide6.QtWidgets import QMessageBox, QComboBox, QTableView, QMenu, QAbstractItemView, QInputDialog, QApplication
 import uuid  # To generate UUIDs
 
 class EditablePandasModel(QAbstractTableModel):
@@ -99,7 +99,7 @@ class EditablePandasModel(QAbstractTableModel):
             return
 
         column_widths = self.get_column_widths()
-        print("BOOOzzzz")
+        # print("BOOOzzzz")
         for column, width in column_widths.items():
             print(f"Setting column {column} width to {width}.")
             view.setColumnWidth(column, width)
@@ -529,7 +529,7 @@ class EditablePandasModel(QAbstractTableModel):
     def move_column(self, column_index, direction):
         """Moves the column at column_index left or right. Direction should be -1 (left) or 1 (right).
         Returns the new column index of the moved column."""
-        print("BOOO from move_column")
+        # print("BOOO from move_column")
 
         self.layoutAboutToBeChanged.emit()
 
@@ -585,17 +585,17 @@ class EditablePandasModel(QAbstractTableModel):
         """Allow move and copy actions during drop."""
         return Qt.CopyAction | Qt.MoveAction
 
-    def dropMimeData(self, data, action, row, column, parent):
+    def dropMimeData(self, data, action, row, column, parent, append=True):
         """Handle MIME data dropped into the table."""
         if not data.hasText():
             return False
 
         try:
-            import json
+            # Parse the dropped text data
             payload = json.loads(data.text())
             dropped_text = payload.get("text", "N/A")
 
-            # Use parent to infer drop location if row/column are invalid
+            # Determine drop location
             if row < 0 or column < 0:
                 if parent and parent.isValid():
                     row = parent.row()
@@ -605,8 +605,6 @@ class EditablePandasModel(QAbstractTableModel):
                     print("Unable to determine valid drop location.")
                     return False
 
-            print(f"Dropped at row {row}, column {column} with data: {dropped_text}")
-
             # Add row if necessary
             if row >= len(self._dataframe):
                 self._dataframe.loc[len(self._dataframe)] = [None] * len(self._dataframe.columns)
@@ -615,8 +613,20 @@ class EditablePandasModel(QAbstractTableModel):
             if column >= len(self._dataframe.columns):
                 self._dataframe[f"Column {len(self._dataframe.columns)}"] = None
 
+            # Check if the user wants to append the text or replace it
+            current_value = self._dataframe.iloc[row, column]
+
+            # Modifier key check (or other logic for appending)
+            append_mode = QApplication.keyboardModifiers() & Qt.ControlModifier  # Use Ctrl key for appending
+            if append_mode and pd.notna(current_value):
+                # Append the dropped text to the existing content
+                new_value = f"{current_value}_{dropped_text}"
+            else:
+                # Replace the existing content
+                new_value = dropped_text
+
             # Update the DataFrame
-            self._dataframe.iloc[row, column] = dropped_text
+            self._dataframe.iloc[row, column] = new_value
 
             # Notify the view
             self.dataChanged.emit(
@@ -828,7 +838,7 @@ class EnhancedPandasModel(EditablePandasModel):
 
     def moveColumn(self, source_col, target_col):
         """Reorder columns based on drag-and-drop."""
-        print("BOOO from moveColumn 1")
+        # print("BOOO from moveColumn 1")
         self.beginMoveColumns(QModelIndex(), source_col, source_col, QModelIndex(), target_col)
 
         # Update column order
@@ -841,7 +851,7 @@ class EnhancedPandasModel(EditablePandasModel):
             self._dataframe = self._dataframe[reordered_columns]
 
         self.endMoveColumns()
-        print("BOOO from moveColumn 2")
+        # print("BOOO from moveColumn 2")
         self.layoutChanged.emit()
 
     def reorder_columns(self, old_index, new_index):
@@ -865,8 +875,8 @@ class SortableTableView(QTableView):
         super().__init__(parent)
 
         # Enable custom context menu
-        self.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.customContextMenuRequested.connect(self.show_context_menu)
+        # self.setContextMenuPolicy(Qt.CustomContextMenu)
+        # self.customContextMenuRequested.connect(self.show_context_menu)
 
         # Enable drag-and-drop for rows
         self.setDragEnabled(True)

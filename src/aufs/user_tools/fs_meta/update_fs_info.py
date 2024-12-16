@@ -317,6 +317,8 @@ class DirectoryLoaderUI(QMainWindow):
 
         shots_df = pd.read_csv(shots_csv)
         dir_list_df = pd.DataFrame(self.directories, columns=["Directory Paths"])
+        print("dir list: ")
+        print(dir_list_df)
 
         # Enable cancelation
         self.cancel_button.setEnabled(True)
@@ -329,6 +331,7 @@ class DirectoryLoaderUI(QMainWindow):
                     break
 
                 # Scrape details for the current directory
+                print("Directory: ", directory)
                 df = file_details_df_from_path([directory], client=client, project=project, shots_df=shots_df, output_csv=output_csv)
                 if not df.empty:
                     self.open_editor(df)

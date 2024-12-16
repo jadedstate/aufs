@@ -101,6 +101,8 @@ class FileSystemScraper:
         Process a list of file paths, extracting relevant data for each.
         This method can be used directly by external processes with absolute paths.
         """
+        # print("BOOO311")
+        # print(paths)
         data = [self.process_entry(path) for path in paths]
         return self.format_as_dataframe(data)
 
@@ -192,8 +194,7 @@ class FileSystemScraper:
         exclude_patterns = [
             '*/jobs/IO/work/*',
             '*/jobs/PROD/*',
-            '*/data/thumbs*',
-            '*/.*',
+            '*/data/thumbs*'
             # Add more patterns as needed
         ]
         paths = []
@@ -227,8 +228,7 @@ class FileSystemScraper:
             '*/IO/from*',
             '*/IO/to*',
             '*/data/setup*',
-            '*/data/thumbs*',
-            '*/.*'
+            '*/data/thumbs*'
             # Add more patterns as needed
         ]
         all_scraped_paths = []

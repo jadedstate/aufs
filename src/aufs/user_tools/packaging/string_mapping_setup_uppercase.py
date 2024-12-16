@@ -11,10 +11,9 @@ import subprocess
 from pathlib import Path
 from datetime import datetime
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTableView, QDialog, 
-                               QMessageBox, QLineEdit, QLabel, QSplitter, QFileDialog, QMenu, QCheckBox, 
-                               QApplication, QDialogButtonBox, QListWidget, QListWidgetItem, QToolButton, QInputDialog, QTabWidget)
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QIntValidator
+                               QMessageBox, QLineEdit, QLabel, QFileDialog, QMenu, QCheckBox, 
+                               QApplication, QListWidget, QListWidgetItem, QToolButton, QInputDialog, QTabWidget)
+from PySide6.QtCore import Qt
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 src_path = os.path.join(current_dir, '..', '..', '..', '..')
@@ -24,6 +23,7 @@ from src.aufs.user_tools.packaging.string_mapping_manager import StringMappingMa
 from src.aufs.user_tools.packaging.string_mapping_snagging import StringRemappingSnaggingWidget
 from src.aufs.user_tools.editable_pandas_model import EditablePandasModel
 from src.aufs.user_tools.fs_meta.update_fs_info import DirectoryLoaderUI
+from aufs.user_tools.packaging.uppercase_template_manager import UppercaseTemplateManager
 from aufs.user_tools.packaging.data_provisioning_widget import DataProvisioningWidget
 from src.aufs.user_tools.deep_editor import DeepEditor
 
@@ -2047,8 +2047,8 @@ class SessionManager:
     def add_new_client(self, client):
         self.client = client
         client_path = os.path.join(self.root_directory, client)
-        client_in_path = os.path.join(self.root_directory, "IN", self.client)
-        client_out_path = os.path.join(self.root_directory, "OUT", self.client)
+        client_in_path = os.path.join(self.root_directory, "IN", "client", self.client)
+        client_out_path = os.path.join(self.root_directory, "OUT", "client", self.client)
         os.makedirs(client_path, exist_ok=True)
         os.makedirs(client_in_path, exist_ok=True)
         os.makedirs(client_out_path, exist_ok=True)
@@ -2093,10 +2093,10 @@ class SessionManager:
     def add_new_recipient(self, client, project, recipient_name):
         self.recipient = recipient_name
         self.job_root_dir = os.path.join(self.root_directory, client, project)
-        vendor_path = os.path.join(self.job_root_dir, "packaging", recipient_name)
-        recipient_path = os.path.join(self.root_directory, "vendors", recipient_name, project)
-        recipient_in = os.path.join(self.root_directory, "IN", "vendor", self.recipient, project)
-        recipient_out = os.path.join(self.root_directory, "OUT", "vendor", self.recipient, project)
+        vendor_path = os.path.join(self.job_root_dir, "packaging", self.recipient)
+        recipient_path = os.path.join(self.root_directory, "vendors", self.recipient, client, project)
+        recipient_in = os.path.join(self.root_directory, "IN", "vendor", self.recipient, client, project)
+        recipient_out = os.path.join(self.root_directory, "OUT", "vendor", self.recipient, client, project)
         from_recipient = os.path.join(self.job_root_dir, "IO", f"from_{self.recipient}")
         to_recipient = os.path.join(self.job_root_dir, "IO", f"to_{self.recipient}")
         os.makedirs(recipient_path, exist_ok=True)

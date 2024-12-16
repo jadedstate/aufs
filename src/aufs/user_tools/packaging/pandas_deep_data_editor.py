@@ -362,7 +362,7 @@ class DeepEditor(QWidget):
         Recalculates or cleans up the PROVISIONEDLINK column.
         When `delete` is True, ensures no references to deleted columns remain.
         """
-        print("BOOO 1")
+        # print("BOOO 1")
         df = self.model.get_dataframe()
 
         if delete:

@@ -418,7 +418,7 @@ class UppercaseTemplateManager(QWidget):
         """Build and display the first pane with available template options."""
         # Prepare directory paths
         directories = [
-            {"Item": "Root", "Path": os.path.join(self.root_directory)},
+            # {"Item": "Root", "Path": os.path.join(self.root_directory)},
             {"Item": "Global Templates", "Path": os.path.join(self.root_directory, "packaging", "global")},
             {"Item": "Vendor Templates", "Path": os.path.join(self.root_directory, "packaging", "vendor", (self.recipient or ""))},
             {"Item": "Client Templates", "Path": os.path.join(self.root_directory, "packaging", "client", (self.client or ""))},

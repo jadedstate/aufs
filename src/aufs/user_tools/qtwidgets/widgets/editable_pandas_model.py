@@ -9,10 +9,11 @@ import uuid  # To generate UUIDs
 class EditablePandasModel(QAbstractTableModel):
     VALID_DTYPES = [ "object", "int64", "float64", "bool", "datetime64[ns]"]  # Re-added
 
-    def __init__(self, dataframe: pd.DataFrame, value_options=None, editable=True, auto_fit_columns=False, parent=None):
+    def __init__(self, dataframe: pd.DataFrame, value_options=None, append=True, editable=True, auto_fit_columns=False, parent=None):
         super().__init__(parent)
         self._dataframe = dataframe if dataframe is not None else pd.DataFrame()
         self._editable = editable
+        self.append = append
         self.value_options = value_options if value_options is not None else {}
         self.auto_fit_columns = auto_fit_columns  # New flag for optional column auto-sizing
         
@@ -585,8 +586,9 @@ class EditablePandasModel(QAbstractTableModel):
         """Allow move and copy actions during drop."""
         return Qt.CopyAction | Qt.MoveAction
 
-    def dropMimeData(self, data, action, row, column, parent, append=True):
+    def dropMimeData(self, data, action, row, column, parent):
         """Handle MIME data dropped into the table."""
+        print("Append?: ", self.append)
         if not data.hasText():
             return False
 
@@ -618,12 +620,20 @@ class EditablePandasModel(QAbstractTableModel):
 
             # Modifier key check (or other logic for appending)
             append_mode = QApplication.keyboardModifiers() & Qt.ControlModifier  # Use Ctrl key for appending
-            if append_mode and pd.notna(current_value):
-                # Append the dropped text to the existing content
-                new_value = f"{current_value}_{dropped_text}"
+            if not self.append:
+                if append_mode and pd.notna(current_value):
+                    # Append the dropped text to the existing content
+                    new_value = f"{current_value}_{dropped_text}"
+                else:
+                    # Replace the existing content
+                    new_value = dropped_text
             else:
-                # Replace the existing content
-                new_value = dropped_text
+                if append_mode and pd.notna(current_value):
+                    # Replace the existing content
+                    new_value = dropped_text
+                else:
+                    # Append the dropped text to the existing content
+                    new_value = f"{current_value}_{dropped_text}"
 
             # Update the DataFrame
             self._dataframe.iloc[row, column] = new_value
@@ -705,9 +715,9 @@ class EditablePandasModel(QAbstractTableModel):
         self.headerDataChanged.emit(Qt.Horizontal, min(old_index, new_index), max(old_index, new_index))
 
 class EnhancedPandasModel(EditablePandasModel):
-    def __init__(self, dataframe, value_options=None, editable=True, transformer=None,
+    def __init__(self, dataframe, value_options=None, append=True, editable=True, transformer=None,
                  auto_fit_columns=False, dragNdrop=False, ui_only=True, create_embedded=False, parent=None):
-        super().__init__(dataframe, value_options, editable, auto_fit_columns, parent)
+        super().__init__(dataframe, value_options, append, editable, auto_fit_columns, parent)
         self.dragNdrop = dragNdrop
         self.ui_only = ui_only
         self.create_embedded = create_embedded  # New mode flag for embedded data
@@ -1001,6 +1011,21 @@ class SortableTableView(QTableView):
         column_widths = model.get_column_widths()  # Delegate to the model
         for column_index, width in column_widths.items():
             self.setColumnWidth(column_index, width)  # Apply the widths
+
+class NestedSortableTableView(SortableTableView):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_editor = parent  # Reference to NestedEditor
+
+    def on_section_moved(self, logical_index, old_visual_index, new_visual_index):
+        """
+        Override to trigger update_preview specifically for NestedEditor.
+        """
+        super().on_section_moved(logical_index, old_visual_index, new_visual_index)
+
+        # Explicitly call update_preview after a column move
+        if self.parent_editor and hasattr(self.parent_editor, "update_preview"):
+            self.parent_editor.update_preview()
 
 class NestedDataTransformer:
     def __init__(self, key_field='key', delimiter='/'):

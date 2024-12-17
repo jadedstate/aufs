@@ -19,7 +19,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 src_path = os.path.join(current_dir, '..', '..', '..')  # Adjust to point to the `src` folder
 sys.path.insert(0, src_path)
 
-from src.aufs.user_tools.qtwidgets.widgets.editable_pandas_model import NestedDataTransformer, EnhancedPandasModel, SortableTableView
+from src.aufs.user_tools.qtwidgets.widgets.editable_pandas_model import NestedDataTransformer, EnhancedPandasModel, SortableTableView, NestedSortableTableView
 
 class DraggableTextInput(QLineEdit):
     def __init__(self, parent=None):
@@ -550,20 +550,22 @@ class DeepEditor(QWidget):
     def add_row(self):
         self.model.add_row()
 
-    def add_column(self):
+    def add_column(self, dialog=False):
         """Add a new column to the DataFrame, with an optional randomly generated column name."""
         # Generate a random column name
         random_column_name = f"Column_{''.join(random.choices(string.ascii_uppercase + string.digits, k=5))}"
 
-        # Prompt the user for a column name, defaulting to the random name
-        column_name, ok = QInputDialog.getText(
-            self,
-            "Add Column",
-            "Column name (leave blank to use a randomly generated name):",
-            text=random_column_name
-        )
+        if dialog:  
+            # Prompt the user for a column name, defaulting to the random name
+            column_name, ok = QInputDialog.getText(
+                self,
+                "Add Column",
+                "Column name (leave blank to use a randomly generated name):",
+                text=random_column_name
+            )
+            if not ok:
+                return  # User cancelled
 
-        if ok:
             column_name = column_name.strip() or random_column_name  # Fallback to random name if input is empty
             dtype, ok_type = QInputDialog.getItem(
                 self,
@@ -572,24 +574,30 @@ class DeepEditor(QWidget):
                 self.model.get_valid_dtypes(),
                 editable=False
             )
-            if ok_type and dtype:
-                # Add the column via the model
-                self.model.add_column(column_name=column_name, dtype=dtype)
+            if not ok_type:
+                return  # User cancelled
+        else:
+            # Bypass dialogs: use default column name and data type
+            column_name = random_column_name
+            dtype = "object"
 
-                # Initialize nested data for the new column
-                df = self.model.get_dataframe()
-                if "nested_data" not in df.attrs:
-                    df.attrs["nested_data"] = {}
-                df.attrs["nested_data"][column_name] = [[] for _ in range(len(df))]
+        # Add the column via the model
+        self.model.add_column(column_name=column_name, dtype=dtype)
 
-                # Recalculate PROVISIONEDLINK to account for the new column
-                self.update_provisioned_links()
+        # Initialize nested data for the new column
+        df = self.model.get_dataframe()
+        if "nested_data" not in df.attrs:
+            df.attrs["nested_data"] = {}
+        df.attrs["nested_data"][column_name] = [[] for _ in range(len(df))]
 
-                # Synchronize nested data structures
-                self.sync_nested_data_with_columns()
+        # Recalculate PROVISIONEDLINK to account for the new column
+        self.update_provisioned_links()
 
-                # Notify the model that the structure has changed
-                self.model.layoutChanged.emit()
+        # Synchronize nested data structures
+        self.sync_nested_data_with_columns()
+
+        # Notify the model that the structure has changed
+        self.model.layoutChanged.emit()
 
     def delete_selected_columns(self):
         selected_columns = sorted(set(index.column() for index in self.table_view.selectionModel().selectedColumns()), reverse=True)
@@ -734,7 +742,7 @@ class DeepEditor(QWidget):
 
         # Reflect changes in the UI
         self.model.layoutChanged.emit()
-        QMessageBox.information(self, "Update Successful", f"Cell updated to: {new_value}\nPROVISIONEDLINK: {joined_value}")
+        # QMessageBox.information(self, "Update Successful", f"Cell updated to: {new_value}\nPROVISIONEDLINK: {joined_value}")
 
     def show_context_menu(self, position):
         """Display a custom context menu for nested editing."""
@@ -1275,10 +1283,11 @@ class NestedEditor(QDialog):
 
         # Enhanced Model for editing
         self.model = EnhancedPandasModel(
-            self.dataframe, 
+            self.dataframe,  
+            append=False,
             editable=True, 
-            auto_fit_columns=self.auto_fit_columns, 
-            dragNdrop=True
+            dragNdrop=True,
+            auto_fit_columns=self.auto_fit_columns
         )
         self.model.dataChanged.connect(self.update_preview)
 
@@ -1304,7 +1313,7 @@ class NestedEditor(QDialog):
         self.main_layout.addLayout(self.preview_layout)
 
         # === Table View for Nested Data ===
-        self.table_view = QTableView(self)
+        self.table_view = NestedSortableTableView(self)
         self.table_view.setModel(self.model)
         self.table_view.setDragEnabled(True)
         self.table_view.setAcceptDrops(True)
@@ -1448,22 +1457,6 @@ class NestedEditor(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to replace: {str(e)}")
 
-    def save_changes(self):
-        """Save changes to the parent or file."""
-        self.accept()  # Close the editor
-
-    def update_preview(self):
-        """Update the live preview as edits are made."""
-        current_value = "".join(str(x) for x in self.model.get_dataframe().iloc[0].tolist())
-        self.preview_label.setText(f"Preview: {current_value}")
-
-        # Update styles based on whether changes were made
-        if current_value != self.original_value:
-            self.preview_label.setStyleSheet("color: green; font-size: 14px; font-weight: bold;")
-        else:
-            self.preview_label.setStyleSheet("color: black; font-size: 14px; font-weight: bold;")
-        self.changes_made = current_value != self.original_value
-
     def dragEnterEvent(self, event):
         print("Drag Enter Event triggered in NestedEditor!")
         super().dragEnterEvent(event)
@@ -1477,8 +1470,11 @@ class NestedEditor(QDialog):
         self.changes_made = True
 
     def update_preview(self):
-        """Update the live preview as edits are made."""
-        current_value = "".join(self.model.get_dataframe().iloc[0].tolist())
+        """Update the live preview as edits are made, ignoring NaN/float fields."""
+        # Filter out NaN/float values and ensure all items are strings
+        current_value = "".join(
+            str(x) for x in self.model.get_dataframe().iloc[0].tolist() if pd.notnull(x)
+        )
         self.preview_label.setText(f"Preview: {current_value}")
 
         # Update styles based on whether changes were made
@@ -1529,31 +1525,38 @@ class NestedEditor(QDialog):
         """Adds a new row at the bottom."""
         self.model.add_row()
 
-    def add_column(self):
-        """Add a new column to the DataFrame, with an optional randomly generated column name."""
-        # Generate a random column name
-        random_column_name = f"Column_{''.join(random.choices(string.ascii_uppercase + string.digits, k=5))}"
-        
-        # Prompt the user for a column name, defaulting to the random name
-        column_name, ok = QInputDialog.getText(
-            self, 
-            "Add Column", 
-            "Column name (leave blank to use a randomly generated name):", 
-            text=random_column_name
-        )
-        
-        # Use the entered column name or the random name
-        if ok:
-            column_name = column_name.strip() or random_column_name  # Fallback to random name if input is empty
-            dtype, ok_type = QInputDialog.getItem(
-                self, 
-                "Select Data Type", 
-                "Choose column data type:",
-                self.model.get_valid_dtypes(), 
-                editable=False
+    def add_column(self, dialog=False):
+        """Add a new column to the DataFrame with optional dialog."""
+        if dialog:
+            # Prompt for a column name and data type
+            random_column_name = f"Column_{''.join(random.choices(string.ascii_uppercase + string.digits, k=5))}"
+            column_name, ok = QInputDialog.getText(
+                self,
+                "Add Column",
+                "Column name (leave blank to use a randomly generated name):",
+                text=random_column_name
             )
-            if ok_type and dtype:
-                self.model.add_column(column_name=column_name, dtype=dtype)
+
+            if ok:
+                column_name = column_name.strip() or random_column_name
+                dtype, ok_type = QInputDialog.getItem(
+                    self,
+                    "Select Data Type",
+                    "Choose column data type:",
+                    self.model.get_valid_dtypes(),
+                    editable=False
+                )
+                if ok_type and dtype:
+                    self.model.add_column(column_name=column_name, dtype=dtype)
+                    # Initialize all cells with '_'
+                    self.model.get_dataframe()[column_name] = '_'
+                    self.model.layoutChanged.emit()
+        else:
+            # Add a column directly with a default value of '_'
+            random_column_name = f"Column_{uuid.uuid4().hex[:6].upper()}"
+            self.model.add_column(column_name=random_column_name, dtype='object')
+            self.model.get_dataframe()[random_column_name] = '_'
+            self.model.layoutChanged.emit()
 
     def move_row_up(self):
         index = self.table_view.currentIndex()

@@ -6,7 +6,7 @@ import pandas as pd
 import shutil
 import re
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QLabel, QPushButton, QFileDialog, QMessageBox, QInputDialog, QHBoxLayout, QSplitter, QSizePolicy
+    QApplication, QWidget, QVBoxLayout, QLabel, QPushButton, QFileDialog, QMessageBox, QInputDialog, QHBoxLayout, QSplitter
 )
 from PySide6.QtCore import Qt
 

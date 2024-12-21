@@ -143,7 +143,7 @@ class DirectoryLoaderUI(QMainWindow):
         """Populate the client dropdown based on directories in jobs_dir."""
         if os.path.exists(self.jobs_dir):
             clients = [d for d in os.listdir(self.jobs_dir) if os.path.isdir(os.path.join(self.jobs_dir, d))]
-            filtered_clients = [client for client in clients if client not in {"vendors", "OUT"}]
+            filtered_clients = [client for client in clients if client not in {"vendors", "OUT", "IN"}]
             self.client_dropdown.addItems(filtered_clients)
 
     def update_projects(self):
@@ -430,7 +430,6 @@ class DirectoryLoaderUI(QMainWindow):
         self.cancel_requested = True
         QMessageBox.information(self, "Cancel Requested", "The current operation will stop shortly.")
 
-
 def main():
     """Main entry point for the application."""
     parser = argparse.ArgumentParser(description="Directory Loader with Scraper")
@@ -444,7 +443,6 @@ def main():
     window = DirectoryLoaderUI(jobs_dir=args.jobs_dir, client=args.client, project=args.project)
     window.show()
     sys.exit(app.exec())
-
 
 if __name__ == "__main__":
     main()

@@ -28,6 +28,7 @@ class DataProvisioningWidget(QWidget):
         self.resize(3000, 900)
         layout = QVBoxLayout()
 
+        layout.addStretch()
         # Display root package path
         self.label = QLabel(f"Root Package Path: {self.root_package_path}")
         layout.addWidget(self.label)

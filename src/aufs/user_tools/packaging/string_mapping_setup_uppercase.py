@@ -5,7 +5,7 @@ import sys
 import re
 import pandas as pd
 import shutil
-from glob import glob  # Import the glob module
+from glob import glob
 import platform
 import subprocess
 from pathlib import Path
@@ -696,8 +696,18 @@ class RequestorUI(QWidget):
         if dialog.exec() == QDialog.Accepted:  # If the user confirms
             self.recipient_out = dialog.selected_path  # Update the path
 
+            # Check if STATUS column exists
+            if "STATUS" not in self.session_df.columns:
+                QMessageBox.critical(self, "Provisioning Error", "The 'STATUS' column is missing. Make sure you Snagged.")
+                return  # Exit the method if the column is missing
+
             # Filter session_df to include only rows where STATUS == "valid"
             provisioning_df = self.session_df.loc[self.session_df["STATUS"] == "valid"]
+
+            # Check if provisioning_df is empty
+            if provisioning_df.empty:
+                QMessageBox.warning(self, "Provisioning Error", "No valid entries, make sure you Snagged.")
+                return  # Exit the method if there are no valid entries
 
             # Pass the filtered DataFrame to the provisioner
             self.provisioner = DataProvisioningWidget(provisioning_df, self.recipient_out)

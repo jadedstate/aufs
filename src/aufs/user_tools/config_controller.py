@@ -1,11 +1,20 @@
+# src/aufs/user_tools/config_controller.py
+
 import os
+import sys
 from PySide6.QtWidgets import (QMainWindow, QVBoxLayout, QWidget, QPushButton, QTabWidget, QLabel, QListWidget, QHBoxLayout,
                                QListWidgetItem, QInputDialog, QMessageBox, QTreeWidget, QTreeWidgetItem, QMenu)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 import pandas as pd
-from scraper import DirectoryScraper
-from popup_editor import PopupEditor
+
+# Add the `src` directory to the Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_path = os.path.join(current_dir, '..', '..', '..')  # Adjust to point to the `src` folder
+sys.path.insert(0, src_path)
+
+from src.aufs.user_tools.scraper import DirectoryScraper
+from src.aufs.user_tools.popup_editor import PopupEditor
 
 class DirectoryTabbedView(QTabWidget):
     def __init__(self, dataframe: pd.DataFrame, root_path: str, main_window, parent=None):
@@ -222,32 +231,46 @@ class DirectoryTreeView(QWidget):
         self.main_window.selected_dir = full_path
 
 class MainWidgetWindow(QMainWindow):
-    def __init__(self, root_path: str):
+    def __init__(self, root_path: str = None, use_dataframe=False, dataframe=None):
         super().__init__()
-        self.setWindowTitle("Directory Viewer")
+        self.setWindowTitle("AUFS Controller")
         self.resize(600, 800)
-        self.root_path = root_path
-        self.selected_dir = root_path
-        os.chdir(root_path)
-        self.dataframe = DirectoryScraper().files_to_dataframe(root_path)
+
+        # Handle inputs
+        self.root_path = root_path if root_path else ""
+        self.selected_dir = self.root_path
+
+        # Set the dataframe based on input mode
+        if use_dataframe and dataframe is not None:
+            self.dataframe = dataframe
+        else:
+            # Fall back to scraper if no DataFrame provided
+            os.chdir(self.root_path)
+            self.dataframe = DirectoryScraper().files_to_dataframe(self.root_path)
+
         self.filter_dataframe()
         self.main_widget = QWidget()
         self.main_layout = QVBoxLayout()
         self.button_layout = QHBoxLayout()
 
+        # UI Controls
         self.create_dir_button = QPushButton("Add Directory")
         self.create_dir_button.clicked.connect(self.create_directory)
         self.button_layout.addWidget(self.create_dir_button)
+
         self.create_file_button = QPushButton("Add File")
         self.create_file_button.clicked.connect(self.create_file)
         self.button_layout.addWidget(self.create_file_button)
-        self.main_layout.addLayout(self.button_layout)
+
         self.refresh_button = QPushButton("Refresh")
         self.refresh_button.clicked.connect(lambda: self.refresh_data(self.root_path))
         self.button_layout.addWidget(self.refresh_button)
         
-        self.tab_widget = DirectoryTabbedView(self.dataframe, root_path, self)
-        self.tree_view_widget = DirectoryTreeView(self.dataframe, root_path, self, self.tab_widget)
+        self.main_layout.addLayout(self.button_layout)
+
+        # Tabbed View for Schema/Data Display
+        self.tab_widget = DirectoryTabbedView(self.dataframe, self.root_path, self)
+        self.tree_view_widget = DirectoryTreeView(self.dataframe, self.root_path, self, self.tab_widget)
         self.main_layout.addWidget(self.tab_widget)
         self.main_widget.setLayout(self.main_layout)
         self.setCentralWidget(self.main_widget)
@@ -274,8 +297,15 @@ class MainWidgetWindow(QMainWindow):
             else:
                 QMessageBox.warning(self, "Error", f"File '{file_name}' already exists at {self.selected_dir}.")
 
-    def refresh_data(self, root_path: str):
-        self.dataframe = DirectoryScraper().files_to_dataframe(root_path)
+    def refresh_data(self, root_path: str = None, use_dataframe=False, dataframe=None):
+        """Refresh data, optionally using a direct DataFrame input."""
+        if use_dataframe and dataframe is not None:
+            # Update using the provided DataFrame
+            self.dataframe = dataframe
+        else:
+            # Fallback: scrape from the filesystem
+            self.dataframe = DirectoryScraper().files_to_dataframe(root_path if root_path else self.root_path)
+
         self.filter_dataframe()
         self.tab_widget.update_tabs(self.dataframe)
         self.tree_view_widget.dataframe = self.dataframe

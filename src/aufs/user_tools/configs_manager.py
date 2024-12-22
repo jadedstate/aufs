@@ -1,4 +1,7 @@
+# src/aufs/user_tools/configs_manager.py
+
 import os
+import sys
 import pandas as pd
 from PySide6.QtWidgets import (
     QApplication, QTabWidget, QFileDialog, QMessageBox, QVBoxLayout, QWidget, QPushButton, QLineEdit, QSplitter, QTableView, QHBoxLayout,
@@ -6,9 +9,14 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QSortFilterProxyModel
 
-from editable_pandas_model import EditablePandasModel
-from config_controller import MainWidgetWindow  # Import MainWidgetWindow
-from popup_editor import PopupEditor
+# Add the `src` directory to the Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_path = os.path.join(current_dir, '..', '..', '..')  # Adjust to point to the `src` folder
+sys.path.insert(0, src_path)
+
+from src.aufs.user_tools.editable_pandas_model import EditablePandasModel
+from src.aufs.user_tools.config_controller import MainWidgetWindow  # Import MainWidgetWindow
+from src.aufs.user_tools.popup_editor import PopupEditor
 
 class ConfigsManagerApp(QMainWindow):
     def __init__(self):

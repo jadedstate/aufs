@@ -433,7 +433,7 @@ class WranglerApp(QMainWindow):
                 uuid_dirname_mapping[dir_id] = dir_name  # UUID to directory name mapping
 
                 # Create column name as parent-name-dir and add as a field
-                column_name = f"{parent_name}-{dir_name}-dir"
+                column_name = f"{parent_id}-{dir_id}-dir"
                 fields.append(pa.field(column_name, pa.string()))
 
             # Optionally add dynamic fields (if required in future)

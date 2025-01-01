@@ -583,7 +583,7 @@ class AUFSRunner(QMainWindow):
                 self.parquet_file = pq.ParquetFile(parquet_path)
                 self.schema = self.parquet_file.schema  # Extract the schema directly
                 self.metadata = self.parquet_file.metadata.metadata  # Extract metadata
-                print(self.metadata)
+                # print(self.metadata)
                 self.table_data = self.parquet_file.read().to_pandas()  
 
                 # --- Pass schema to build_aufs_dataframe ---
@@ -754,7 +754,6 @@ class AUFSRunner(QMainWindow):
 
     def prepare_controller_df(self, df):
         """Final preparation of the DataFrame for controller delivery, including UUID replacement."""
-        self.nullify_coords = []  # Reset nullification list
 
         try:
             # Replace UUIDs with names in headers

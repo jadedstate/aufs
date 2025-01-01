@@ -10,8 +10,8 @@ import platform
 import subprocess
 from pathlib import Path
 from datetime import datetime
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTableView, QDialog, 
-                               QMessageBox, QLineEdit, QLabel, QFileDialog, QMenu, QCheckBox, 
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTableView, QDialog, QProgressDialog, 
+                               QMessageBox, QLineEdit, QComboBox, QLabel, QFileDialog, QMenu, QCheckBox, 
                                QApplication, QListWidget, QListWidgetItem, QToolButton, QInputDialog, QTabWidget)
 from PySide6.QtCore import Qt
 
@@ -26,6 +26,7 @@ from src.aufs.user_tools.fs_meta.update_fs_info import DirectoryLoaderUI
 from aufs.user_tools.packaging.uppercase_template_manager import UppercaseTemplateManager
 from aufs.user_tools.packaging.data_provisioning_widget import DataProvisioningWidget
 from src.aufs.user_tools.deep_editor import DeepEditor
+from src.aufs.user_tools.fs_meta.ingest_job_data import MainApp
 
 def QVBoxLayoutWrapper(label_text, widget, add_new_callback=None, fixed_width=None, min_width=None):
     """
@@ -141,6 +142,11 @@ class RequestorUI(QWidget):
         replace_template_button = QPushButton("Replace Template")
         replace_template_button.clicked.connect(self.replace_template_file)
         button_area_rightside_layout.addWidget(replace_template_button)
+
+        # Add "Ingest Job Data" button
+        ingest_job_data_button = QPushButton("Ingest Job Data")
+        ingest_job_data_button.clicked.connect(self.handle_job_data_ingest)
+        button_area_rightside_layout.addWidget(ingest_job_data_button)
 
         button_area_rightside_layout.addStretch()
 
@@ -1522,6 +1528,23 @@ class RequestorUI(QWidget):
                 self.populate_recipients()
                 self.select_list_item(self.recipient_selector, result)
 
+    def handle_job_data_ingest(self):
+        """Launches the IngestDialog for managing job data ingestion."""
+        # === Step 1: Validate selection of Client, Project, and Recipient ===
+        if not self.client or not self.project or not self.recipient:
+            QMessageBox.warning(self, "Selection Error", "Please select a client, project, and recipient before ingesting data.")
+            return
+
+        # === Step 2: Open the IngestDialog ===
+        dialog = IngestDialog(self.session_manager, self.client, self.project, self.recipient, parent=self)
+
+        # === Step 3: Show the dialog and handle the result ===
+        if dialog.exec() == QDialog.Accepted:  # User confirmed the operation
+            # QMessageBox.information(self, "Ingest Completed", "Files and folders were successfully ingested!")
+            return
+        else:  # User canceled the operation
+            QMessageBox.information(self, "Ingest Canceled", "No files or folders were moved.")
+
     def handle_new_session(self):
         """Handle the creation or selection of a new session."""
         session_csv_path = os.path.join(self.session_manager.root_directory, self.client, self.project, "sessions.csv")
@@ -2379,6 +2402,337 @@ class DualInputDialog(QDialog):
     def get_results(self):
         """Return the Full Name and Working Name."""
         return self.full_name_input.text().strip(), self.working_name_input.text().strip()
+
+class IngestDialog(QDialog):
+    def __init__(self, session_manager, client, project, recipient, parent=None):
+        super().__init__(parent)
+        self.session_manager = session_manager
+        self.client = client
+        self.project = project
+        self.recipient = recipient
+        self.setWindowTitle("Ingest Job Data")
+        self.resize(800, 600)
+
+        # === Layouts ===
+        main_layout = QVBoxLayout(self)
+
+        # === Add Files/Folders Section ===
+        add_buttons_layout = QHBoxLayout()
+        self.add_files_button = QPushButton("Add Files")
+        self.add_files_button.clicked.connect(self.add_files)
+        add_buttons_layout.addWidget(self.add_files_button)
+
+        self.add_folders_button = QPushButton("Add Folders")
+        self.add_folders_button.clicked.connect(self.add_folders)
+        add_buttons_layout.addWidget(self.add_folders_button)
+
+        main_layout.addLayout(add_buttons_layout)
+
+        # === ListView for Paths ===
+        self.paths_list = QListWidget()
+        main_layout.addWidget(self.paths_list)
+
+        # === Total Size Label ===
+        self.total_size_label = QLabel("Total Size: 0 B")
+        main_layout.addWidget(self.total_size_label)
+
+        # === Destination Dropdown ===
+        main_layout.addWidget(QLabel("Destination:"))
+        self.destination_dropdown = QComboBox()
+        self.populate_destinations()
+        main_layout.addWidget(self.destination_dropdown)
+
+        # === Merge Strategy Dropdown ===
+        main_layout.addWidget(QLabel("Merge Strategy:"))
+        self.merge_dropdown = QComboBox()
+        self.merge_dropdown.addItems(["Replace", "Keep Newest"])
+        main_layout.addWidget(self.merge_dropdown)
+
+        # === Action Buttons ===
+        actions_layout = QHBoxLayout()
+        self.move_button = QPushButton("Ingest")
+        self.move_button.clicked.connect(self.move_data)
+        actions_layout.addWidget(self.move_button)
+
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+        actions_layout.addWidget(self.cancel_button)
+
+        main_layout.addLayout(actions_layout)
+
+        # === Data Storage ===
+        self.paths_df = pd.DataFrame(columns=["PATH", "PATHTYPE", "SIZE", "HRSIZE", "ISDUPLICATE"])  # Updated DataFrame
+
+    def add_files(self):
+        """Continuously prompt to add files until the user clicks Cancel."""
+        while True:
+            files, _ = QFileDialog.getOpenFileNames(self, "Select Files")
+            if not files:  # User clicked Cancel
+                break
+            self.add_paths(files)
+
+    def add_folders(self):
+        """Continuously prompt to add folders until the user clicks Cancel."""
+        while True:
+            folder = QFileDialog.getExistingDirectory(self, "Select Folder")
+            if not folder:  # User clicked Cancel
+                break
+            self.add_paths([folder])
+
+    def add_paths(self, new_paths):
+        """Add new paths and update the UI."""
+        for path in new_paths:
+            if path not in self.paths_df['PATH'].values:  # Avoid duplicates
+                self.add_to_dataframe(path)
+
+        # Update duplicates, sizes, and UI
+        self.update_duplicates()
+        self.update_total_size()
+        self.update_listview()
+
+    def add_to_dataframe(self, path):
+        """Add path metadata, including filesystem match check, to the DataFrame."""
+        path_type = "Dir" if os.path.isdir(path) else "File"
+        size = self.get_size(path)
+        hr_size = self.human_readable_size(size)
+
+        # Check if the source and destination are on the same filesystem
+        try:
+            src_device = os.stat(path).st_dev
+            dest_device = os.stat(self.base_path).st_dev
+            is_dest_fs_match = src_device == dest_device
+        except Exception as e:
+            is_dest_fs_match = False  # Default to False if there's an error
+
+        # Add row to DataFrame
+        new_row = pd.DataFrame(
+            [[path, path_type, size, hr_size, False, is_dest_fs_match]],
+            columns=["PATH", "PATHTYPE", "SIZE", "HRSIZE", "ISDUPLICATE", "ISDESTFSMATCH"]
+        )
+        self.paths_df = pd.concat([self.paths_df, new_row], ignore_index=True)
+        self.paths = self.paths_df['PATH'].tolist()
+
+    def get_size(self, path):
+        """Calculate the size of a file or directory."""
+        if os.path.isfile(path):
+            return os.path.getsize(path)
+        elif os.path.isdir(path):
+            total_size = 0
+            for dirpath, _, filenames in os.walk(path):
+                for f in filenames:
+                    fp = os.path.join(dirpath, f)
+                    total_size += os.path.getsize(fp)
+            return total_size
+        return 0
+
+    def update_duplicates(self):
+        """Mark duplicate paths as duplicates in the DataFrame."""
+        # self.paths = self.paths_df['PATH'].tolist()
+        duplicates = []
+
+        for i, path in enumerate(self.paths):
+            for j, other_path in enumerate(self.paths):
+                if i != j and path.startswith(other_path.rstrip("/") + "/"):
+                    duplicates.append(i)
+
+        self.paths_df['ISDUPLICATE'] = False
+        self.paths_df.loc[duplicates, 'ISDUPLICATE'] = True
+
+    def update_total_size(self):
+        """Update the total size label, including cross-filesystem data size."""
+        # Total size of non-duplicates
+        filtered_df = self.paths_df[self.paths_df['ISDUPLICATE'] == False]
+        total_size = filtered_df["SIZE"].sum()
+
+        # Total size of cross-filesystem data
+        cross_fs_df = filtered_df[filtered_df['ISDESTFSMATCH'] == False]
+        cross_fs_size = cross_fs_df["SIZE"].sum()
+
+        self.total_size_label.setText(
+            f"Total Size: {self.human_readable_size(total_size)} "
+            f"(Cross-FS: {self.human_readable_size(cross_fs_size)})"
+        )
+
+    def update_listview(self):
+        """Update the ListView with paths from the DataFrame."""
+        self.paths_list.clear()
+        for _, row in self.paths_df.iterrows():
+            display_text = self.format_display(row)
+            item = QListWidgetItem(display_text)
+            item.setToolTip(row["PATH"])
+            self.paths_list.addItem(item)
+
+    def format_display(self, row):
+        """Format display text for a row in the DataFrame."""
+        duplicate_marker = " [DUPLICATE]" if row['ISDUPLICATE'] else ""
+        fs_marker = " [CROSS-FS]" if not row['ISDESTFSMATCH'] else ""
+        return f"{row['PATH']} ({row['PATHTYPE']}, {row['HRSIZE']}){duplicate_marker}{fs_marker}"
+
+    def human_readable_size(self, size):
+        """Convert bytes into a human-readable format."""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size < 1024:
+                return f"{size:.2f} {unit}"
+            size /= 1024
+        return f"{size:.2f} PB"
+
+    def setup_progress_dialog(self, total_steps):
+        """Setup and display the progress dialog."""
+        self.progress_dialog = QProgressDialog("Moving data...", "STOP", 0, total_steps, self)
+        self.progress_dialog.setWindowTitle("Ingest Progress")
+        self.progress_dialog.setWindowModality(Qt.WindowModal)
+        self.progress_dialog.setMinimumDuration(0)  # Show immediately
+        self.progress_dialog.canceled.connect(self.cancel_move)  # Connect STOP button
+
+    def cancel_move(self):
+        """Cancel the current move operation."""
+        self.cancel_requested = True  # Set flag to stop further processing
+        QMessageBox.information(self, "Cancelled", "Move operation cancelled!")
+
+    def populate_destinations(self):
+        """Populate destination dropdown."""
+        base_path = os.path.join(self.session_manager.root_directory, "IN")
+        if self.recipient == "client":
+            base_path = os.path.join(base_path, "client", self.client, self.project)
+        else:
+            base_path = os.path.join(base_path, "vendor", self.recipient, self.client, self.project)
+
+        os.makedirs(base_path, exist_ok=True)
+        existing_dirs = sorted([d for d in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, d)) and re.match(r"\d{8}_\d{3}", d)])
+        self.destination_dropdown.addItem("Create New Ingest Directory")
+        self.destination_dropdown.addItems(existing_dirs)
+        self.base_path = base_path
+
+    def merge_directories(self, src, dest, merge_strategy='replace'):
+        """
+        Merge contents of src directory into dest directory.
+
+        Parameters:
+        - src: Source directory path.
+        - dest: Destination directory path.
+        - merge_strategy: Strategy for handling conflicts ('replace', 'keep-newest', 'skip', 'fail').
+        """
+        if not os.path.exists(dest):
+            os.makedirs(dest)
+
+        for item in os.listdir(src):
+            src_item = os.path.join(src, item)
+            dest_item = os.path.join(dest, item)
+
+            if os.path.isdir(src_item):
+                self.merge_directories(src_item, dest_item, merge_strategy)
+            else:
+                if os.path.exists(dest_item):
+                    if merge_strategy == 'replace':
+                        shutil.move(src_item, dest_item)
+                    elif merge_strategy == 'keep-newest':
+                        if os.path.getmtime(src_item) > os.path.getmtime(dest_item):
+                            shutil.move(src_item, dest_item)
+                    elif merge_strategy == 'skip':
+                        continue
+                    elif merge_strategy == 'fail':
+                        raise FileExistsError(f"Conflict: {dest_item} already exists.")
+                else:
+                    shutil.move(src_item, dest_item)
+
+        # Optionally, remove the source directory after merging
+        try:
+            os.rmdir(src)
+        except OSError:
+            pass  # Directory not empty or other error
+
+    def move_data(self):
+        """Perform the move operation with progress and cancel support."""
+        if self.paths_df.empty:
+            QMessageBox.warning(self, "No Data", "No files or folders have been added.")
+            return
+
+        # === Destination Handling ===
+        selected_dest = self.destination_dropdown.currentText()
+        if selected_dest == "Create New Ingest Directory":
+            date_str = datetime.utcnow().strftime("%Y%m%d")
+            version = 1
+            while True:
+                dir_name = f"{date_str}_{version:03d}"
+                destination = os.path.join(self.base_path, dir_name)
+                if not os.path.exists(destination):
+                    os.makedirs(destination)
+                    break
+                version += 1
+        else:
+            destination = os.path.join(self.base_path, selected_dest)
+
+        # === Filesystem Warnings ===
+        cross_fs_df = self.paths_df[self.paths_df['ISDESTFSMATCH'] == False]
+        cross_fs_size = cross_fs_df["SIZE"].sum()
+
+        if not cross_fs_df.empty:
+            QMessageBox.warning(
+                self,
+                "Cross-Filesystem Move",
+                f"WARNING: {len(cross_fs_df)} paths ({self.human_readable_size(cross_fs_size)}) "
+                "are being moved across filesystems. Ensure sufficient space at the destination!"
+            )
+
+        # === Merge Strategy ===
+        merge_strategy = self.merge_dropdown.currentText().lower().replace(" ", "-")  # e.g., 'Keep Newest' -> 'keep-newest'
+
+        # === Sort Paths to Prioritize Directories ===
+        self.paths.sort(key=lambda p: (not os.path.isdir(p), p))  # Directories first, then files
+
+        # === Initialize Progress ===
+        total_files = len(self.paths)
+        self.setup_progress_dialog(total_files)
+        self.cancel_requested = False
+
+        # === Move Data ===
+        errors = []
+        for index, path in enumerate(self.paths):
+            # === Check for Cancellation ===
+            if self.cancel_requested:
+                errors.append(f"Cancelled at {path}")
+                break
+
+            # === Skip Already Moved Paths ===
+            if not os.path.exists(path):  # Path has already been moved inside a parent directory
+                continue
+
+            try:
+                target = os.path.join(destination, os.path.basename(path))
+
+                if os.path.isdir(path):
+                    self.merge_directories(path, target, merge_strategy)
+                else:
+                    if os.path.exists(target):
+                        if merge_strategy == 'replace':
+                            shutil.move(path, target)
+                        elif merge_strategy == 'keep-newest':
+                            if os.path.getmtime(path) > os.path.getmtime(target):
+                                shutil.move(path, target)
+                        elif merge_strategy == 'skip':
+                            continue
+                        elif merge_strategy == 'fail':
+                            raise FileExistsError(f"Conflict: {target} already exists.")
+                    else:
+                        shutil.move(path, target)
+
+                # === Update Progress ===
+                self.progress_dialog.setValue(index + 1)
+
+            except Exception as e:
+                errors.append(str(e))
+
+        # === Finalize Progress ===
+        self.progress_dialog.setValue(total_files)
+
+        # === Show Results ===
+        if errors:
+            QMessageBox.critical(self, "Errors", "\n".join(errors))
+        else:
+            QMessageBox.information(self, "Success", f"Data moved to:\n{destination}")
+            self.accept()  # Close dialog on success
+        
+        self.populate_destinations
 
 class PathConfirmationDialog(QDialog):
     def __init__(self, initial_path, parent=None):

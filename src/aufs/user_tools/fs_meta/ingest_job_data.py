@@ -58,11 +58,11 @@ def QVBoxLayoutWrapper(label_text, widget, add_new_callback=None, fixed_width=No
     return layout
 
 class JobDataIngestor(QWidget):
-    def __init__(self, session_manager, parent=None):
+    def __init__(self, session_manager, ingest_widget, parent=None):
         super().__init__(parent)
-        # print("Parent:", self.parent())  # Debug parent info
-
         self.session_manager = session_manager
+        self.ingest_widget = ingest_widget  # Explicit reference to IngestWidget
+
         self.client = ''
         self.project = ''
         self.recipient = ''
@@ -154,16 +154,13 @@ class JobDataIngestor(QWidget):
         self.client = item.text()
         self.clear_list(self.project_selector)
         self.clear_list(self.recipient_selector)
-        # self.clear_list(self.session_selector)
-        # self.clear_list(self.request_selector)
-        # self.clear_session_table()
+
+        # Populate projects
         self.populate_projects()
 
-        # Clear IngestWidget destinations when client or project changes
-        if self.parent():
-            parent_window = self.parent().parent()  # Get MainApp parent
-            if hasattr(parent_window, 'ingest_widget'):
-                parent_window.ingest_widget.clear_destination_dropdown()
+        # Clear IngestWidget destinations
+        if self.ingest_widget:  # Use explicit reference
+            self.ingest_widget.clear_destination_dropdown()
 
     def on_project_selected(self, item):
         """Handles project selection and populates recipients."""
@@ -171,16 +168,13 @@ class JobDataIngestor(QWidget):
         self.root_path = os.path.join(self.session_manager.root_directory, self.client, self.project, "packaging")
         self.root_job_path = os.path.join(self.session_manager.root_directory, self.client, self.project)
         self.clear_list(self.recipient_selector)
-        # self.clear_list(self.session_selector)
-        # self.clear_list(self.request_selector)
-        # self.clear_session_table()
+
+        # Populate recipients
         self.populate_recipients()
 
-        # Clear IngestWidget destinations when client or project changes
-        if self.parent():
-            parent_window = self.parent().parent()  # Get MainApp parent
-            if hasattr(parent_window, 'ingest_widget'):
-                parent_window.ingest_widget.clear_destination_dropdown()
+        # Clear IngestWidget destinations
+        if self.ingest_widget:  # Use explicit reference
+            self.ingest_widget.clear_destination_dropdown()
 
     def on_recipient_selected(self, item):
         """Handles recipient selection and updates the ingest widget."""
@@ -189,11 +183,9 @@ class JobDataIngestor(QWidget):
         # Trigger recipient change updates
         self.on_recipient_change()
 
-        # Refresh IngestWidget destinations when recipient changes
-        if self.parent():
-            parent_window = self.parent().parent()  # Get MainApp parent
-            if hasattr(parent_window, 'ingest_widget'):
-                parent_window.ingest_widget.populate_destinations()
+        # Refresh IngestWidget destinations
+        if self.ingest_widget:  # Use explicit reference
+            self.ingest_widget.populate_destinations()
 
     def clear_list(self, list_widget):
         """Clears all items from a QListWidget."""
@@ -352,7 +344,7 @@ class JobDataIngestor(QWidget):
         if matching_items:
             list_widget.setCurrentItem(matching_items[0])
 
-class SessionManager:
+class IngestSessionManager:
     def __init__(self, root_directory):
         self.root_directory = os.path.expanduser(root_directory)
         self.session_csv = os.path.join(self.root_directory, "sessions.csv")
@@ -1339,44 +1331,37 @@ class IngestWidget(QWidget):
             QMessageBox.information(self, "Success", f"Data copied to:\n{destination}")
             self.populate_destinations()
 
-class MainApp(QMainWindow):
-    def __init__(self):
-        super().__init__()
+class MainAppWidget(QWidget):
+    def __init__(self, session_manager, parent=None):
+        super().__init__(parent)
+
         self.setWindowTitle("Job Data Management")
+        self.resize(1024, 768)
 
-        # Create central widget and layout
-        central_widget = QWidget()
-        main_layout = QVBoxLayout(central_widget)
+        # === Layout ===
+        main_layout = QVBoxLayout(self)
 
-        # Create the session manager
-        session_manager = SessionManager("~/.aufs/config/jobs/active")
-
-        # Initialize widgets with references
-        self.job_data_ingestor = JobDataIngestor(session_manager=session_manager, parent=central_widget)
-        self.ingest_widget = IngestWidget(
+        # Initialize widgets with cross-references
+        self.ingest_widget = IngestWidget(session_manager=session_manager, parent=self)
+        self.job_data_ingestor = JobDataIngestor(
             session_manager=session_manager,
-            parent=central_widget,
-            job_data_ingestor=self.job_data_ingestor  # Pass reference to JobDataIngestor
+            ingest_widget=self.ingest_widget,  # Pass reference to IngestWidget
+            parent=self
         )
 
-        # Add widgets to the main layout
-        main_layout.addWidget(self.job_data_ingestor)  # Add the first widget
-        main_layout.addWidget(self.ingest_widget)     # Add the second widget
+        # Now set the reverse reference inside the IngestWidget
+        self.ingest_widget.job_data_ingestor = self.job_data_ingestor  # Cross-reference!
 
-        # === Exit Button Layout ===
-        exit_layout = QHBoxLayout()
-        exit_layout.addStretch()  # Push button to the right
-        self.exit_button = QPushButton("Exit")  # Exit button
-        self.exit_button.clicked.connect(self.close_application)  # Connect to exit function
-        exit_layout.addWidget(self.exit_button)
-        exit_layout.addStretch() 
-        main_layout.addLayout(exit_layout)
+        # Add widgets to the layout
+        main_layout.addWidget(self.job_data_ingestor)
+        main_layout.addWidget(self.ingest_widget)
 
-        # Set the central widget with its layout
-        self.setCentralWidget(central_widget)
+        # Exit Button
+        self.exit_button = QPushButton("Exit")
+        self.exit_button.clicked.connect(self.close)
+        main_layout.addWidget(self.exit_button)
 
-        # Set window size
-        self.resize(1024, 768)
+        self.setLayout(main_layout)
 
     def populate_destinations_menu(self):
         self.ingest_widget.populate_destinations()
@@ -1391,6 +1376,7 @@ class MainApp(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    main_window = MainApp()
-    main_window.show()
+    session_manager = IngestSessionManager("~/.aufs/config/jobs/active")
+    standalone_app = MainAppWidget(session_manager=session_manager)
+    standalone_app.show()
     sys.exit(app.exec())
